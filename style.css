@@ -1,16 +1,46 @@
 
 body {
-    font-family: Arial, sans-serif;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f2f2f2;
+    color: #333;
+    transition: background-color 0.3s, color 0.3s;
+}
+.container {
+    max-width: 800px;
+    margin: auto;
     padding: 20px;
-    background-color: #f9f9f9;
 }
-form input {
-    margin: 5px;
-    padding: 8px;
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
-#shopping-list div {
-    padding: 5px;
-    margin: 5px 0;
+form input, form textarea, form button {
+    padding: 10px;
+    font-size: 1em;
+}
+#controls {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+#shopping-list {
+    margin-top: 20px;
+}
+#shopping-list .entry {
     background-color: #fff;
     border-left: 4px solid #4CAF50;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+.dark-mode {
+    background-color: #222;
+    color: #eee;
+}
+.dark-mode .entry {
+    background-color: #333;
+    border-left-color: #00e676;
 }
