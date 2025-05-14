@@ -1,0 +1,16 @@
+
+body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #f9f9f9;
+}
+form input {
+    margin: 5px;
+    padding: 8px;
+}
+#shopping-list div {
+    padding: 5px;
+    margin: 5px 0;
+    background-color: #fff;
+    border-left: 4px solid #4CAF50;
+}
