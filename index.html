@@ -1,37 +1,49 @@
 <!doctype html>
 <html lang="el">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
-  <meta name="description" content="Η κοινή λίστα αγορών μας">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e"><meta name="description" content="Η κοινή λίστα αγορών μας">
+  <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css">
   <title>Τα Ψώνια μας</title>
 </head>
 <body>
   <main class="shell">
-    <header>
-      <div><h1>🛒 Τα Ψώνια μας</h1><p id="summary">0 προς αγορά • 0 αγορασμένα</p></div>
-      <span id="network" class="status ok">● Online</span>
-    </header>
-    <section id="listView">
-      <div class="add"><input id="quickInput" autocomplete="off" placeholder="π.χ. 2 γάλατα" aria-label="Γρήγορη προσθήκη"><button id="addBtn">Προσθήκη</button></div>
-      <input id="search" class="search" placeholder="Αναζήτηση..." aria-label="Αναζήτηση">
-      <section><h2>Προς αγορά</h2><div id="activeList"></div></section>
-      <section id="purchasedSection" hidden><div class="section-title"><h2>Αγορασμένα</h2><button id="clearPurchased" class="link">Καθαρισμός</button></div><div id="purchasedList"></div></section>
-      <details id="trashSection" hidden><summary id="trashSummary">Πρόσφατα διαγραμμένα</summary><div id="trashList"></div></details>
+    <section id="authView" class="auth-card">
+      <h1>🛒 Τα Ψώνια μας</h1><p>Κοινή λίστα αγορών για το σπίτι.</p>
+      <div class="seg"><button id="showLogin" class="active">Σύνδεση</button><button id="showSignup">Εγγραφή</button></div>
+      <form id="loginForm"><input id="loginEmail" type="email" placeholder="Email" required><input id="loginPassword" type="password" placeholder="Κωδικός" required><button>Σύνδεση</button></form>
+      <form id="signupForm" hidden><input id="signupName" placeholder="Όνομα"><input id="signupEmail" type="email" placeholder="Email" required><input id="signupPassword" type="password" minlength="6" placeholder="Κωδικός (6+ χαρακτήρες)" required><button>Δημιουργία λογαριασμού</button></form>
+      <div id="authError" class="error" hidden></div>
     </section>
-    <section id="historyView" hidden><h2>Ιστορικό</h2><div id="historyList"></div></section>
-    <section id="settingsView" hidden><h2>Ρυθμίσεις</h2><div class="settings">
-      <label>Εμφάνιση<select id="theme"><option value="system">Σύστημα</option><option value="light">Φωτεινό</option><option value="dark">Σκούρο</option></select></label>
-      <div class="notice"><strong>Τοπική λειτουργία ενεργή</strong><p>Η εφαρμογή δουλεύει τώρα στη συσκευή και offline. Η κοινή λίστα δύο χρηστών θα ενεργοποιηθεί με Supabase.</p></div>
-      <button id="installBtn" class="secondary" hidden>Εγκατάσταση εφαρμογής</button>
-    </div></section>
-    <nav><button data-tab="list" class="active">🛒<span>Λίστα</span></button><button data-tab="history">🕘<span>Ιστορικό</span></button><button data-tab="settings">⚙️<span>Ρυθμίσεις</span></button></nav>
+
+    <section id="householdView" class="auth-card" hidden>
+      <h1>Το κοινό σας σπίτι</h1><p>Δημιούργησε νέα κοινή λίστα ή μπες με κωδικό πρόσκλησης.</p>
+      <div class="stack"><input id="houseName" placeholder="π.χ. Το σπίτι μας"><button id="createHouse">Δημιουργία</button><div class="or">ή</div><input id="inviteCode" placeholder="Κωδικός πρόσκλησης"><button id="joinHouse" class="secondary">Συμμετοχή</button></div>
+      <div id="houseError" class="error" hidden></div>
+    </section>
+
+    <section id="appView" hidden>
+      <header>
+        <div><h1>🛒 Τα Ψώνια μας</h1><p id="summary">0 προς αγορά • 0 αγορασμένα</p><small id="houseMeta"></small></div>
+        <div class="header-actions"><span id="network" class="status ok">● Online</span><button id="logoutBtn" class="icon-btn" title="Αποσύνδεση">↪</button></div>
+      </header>
+      <section id="listView">
+        <div class="add"><input id="quickInput" autocomplete="off" placeholder="π.χ. 2 γάλατα" aria-label="Γρήγορη προσθήκη"><button id="addBtn">Προσθήκη</button></div>
+        <input id="search" class="search" placeholder="Αναζήτηση..." aria-label="Αναζήτηση">
+        <section><h2>Προς αγορά</h2><div id="activeList"></div></section>
+        <section id="purchasedSection" hidden><div class="section-title"><h2>Αγορασμένα</h2><button id="clearPurchased" class="link">Καθαρισμός</button></div><div id="purchasedList"></div></section>
+        <details id="trashSection" hidden><summary id="trashSummary">Πρόσφατα διαγραμμένα</summary><div id="trashList"></div></details>
+      </section>
+      <section id="historyView" hidden><h2>Ιστορικό</h2><div id="historyList"></div></section>
+      <section id="settingsView" hidden><h2>Ρυθμίσεις</h2><div class="settings">
+        <div class="notice"><strong>Κωδικός πρόσκλησης</strong><p id="inviteDisplay">—</p></div>
+        <label>Εμφάνιση<select id="theme"><option value="system">Σύστημα</option><option value="light">Φωτεινό</option><option value="dark">Σκούρο</option></select></label>
+        <button id="installBtn" class="secondary" hidden>Εγκατάσταση εφαρμογής</button>
+      </div></section>
+      <nav><button data-tab="list" class="active">🛒<span>Λίστα</span></button><button data-tab="history">🕘<span>Ιστορικό</span></button><button data-tab="settings">⚙️<span>Ρυθμίσεις</span></button></nav>
+    </section>
   </main>
   <template id="itemTemplate"><article class="item"><button class="check"></button><div class="item-main"><strong></strong><span></span><small></small></div><button class="icon"></button><div class="editor" hidden></div></article></template>
+  <div id="toast" class="toast" hidden></div>
   <script src="script.js" defer></script>
-</body>
-</html>
+</body></html>
