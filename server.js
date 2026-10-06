@@ -65,7 +65,7 @@ async function init(){
  );`);
 }
 function send(res,status,data,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true',...headers});res.end(JSON.stringify(data))}
-function token(req){const h=req.headers.authorization||'';return h.startsWith('Bearer ')?h.slice(7):null}
+function token(req){const h=req.headers.authorization||'';if(h.startsWith('Bearer '))return h.slice(7);try{return new URL(req.url,'http://localhost').searchParams.get('token')}catch{return null}}
 function auth(req){try{return jwt.verify(token(req),JWT_SECRET)}catch{return null}}
 async function body(req){return new Promise((resolve,reject)=>{let b='';req.on('data',d=>{b+=d;if(b.length>1e6)req.destroy()});req.on('end',()=>{try{resolve(b?JSON.parse(b):{})}catch{reject(new Error('invalid_json'))}});req.on('error',reject)})}
 async function member(userId,householdId){const r=await pool.query('select 1 from shopping_app.memberships where user_id=$1 and household_id=$2',[userId,householdId]);return !!r.rowCount}
