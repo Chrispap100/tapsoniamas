@@ -92,7 +92,8 @@ const server=http.createServer(async(req,res)=>{
     if(!user||!(await bcrypt.compare(String(b.password||''),user.password_hash)))return send(res,401,{error:'Λάθος email ή κωδικός.'});
     const t=jwt.sign({sub:user.id,email:user.email},JWT_SECRET,{expiresIn:'30d'});return send(res,200,{token:t,user:{id:user.id,email:user.email,displayName:user.display_name}});
   }
-  const a=auth(req);if(u.pathname.startsWith('/api/')&&!a)return send(res,401,{error:'Χρειάζεται σύνδεση.'});
+  if(!u.pathname.startsWith('/api/')){if(staticFile(req,res))return;res.writeHead(404);return res.end('Not found')}
+  const a=auth(req);if(!a)return send(res,401,{error:'Χρειάζεται σύνδεση.'});
   if(u.pathname==='/api/me'&&req.method==='GET'){const h=await firstHousehold(a.sub);return send(res,200,{user:{id:a.sub,email:a.email},household:h})}
   if(u.pathname==='/api/households'&&req.method==='POST'){const b=await body(req),hid=crypto.randomUUID(),code=crypto.randomBytes(4).toString('hex').toUpperCase();await pool.query('insert into shopping_app.households(id,name,invite_code,created_by) values($1,$2,$3,$4)',[hid,b.name||'Το σπίτι μας',code,a.sub]);await pool.query('insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,$3)',[a.sub,hid,'owner']);return send(res,201,{id:hid,name:b.name||'Το σπίτι μας',inviteCode:code})}
   if(u.pathname==='/api/households/join'&&req.method==='POST'){const b=await body(req);const r=await pool.query('select id,name,invite_code from shopping_app.households where invite_code=$1',[String(b.inviteCode||'').toUpperCase()]);if(!r.rowCount)return send(res,404,{error:'Ο κωδικός πρόσκλησης δεν βρέθηκε.'});await pool.query('insert into shopping_app.memberships(user_id,household_id) values($1,$2) on conflict do nothing',[a.sub,r.rows[0].id]);return send(res,200,{id:r.rows[0].id,name:r.rows[0].name,inviteCode:r.rows[0].invite_code})}
@@ -103,8 +104,7 @@ const server=http.createServer(async(req,res)=>{
   const m=u.pathname.match(/^\/api\/items\/([0-9a-f-]+)$/);
   if(m&&req.method==='PATCH'){const iid=m[1],b=await body(req);const allowed=['name','quantity','unit','category','store','note','priority','status'];const sets=[],vals=[];let n=1;for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=$${n++}`);vals.push(b[k])}sets.push(`updated_at=now()`);if(b.status==='purchased')sets.push('purchased_at=now()');if(b.status==='active')sets.push('purchased_at=null');vals.push(iid,h.id);const r=await pool.query(`update shopping_app.items set ${sets.join(',')} where id=$${n++} and household_id=$${n} returning *`,vals);if(!r.rowCount)return send(res,404,{error:'Το προϊόν δεν βρέθηκε.'});await log(h.id,a.sub,'update',r.rows[0].name);emit(h.id,{type:'items_changed'});return send(res,200,{item:r.rows[0]})}
   if(u.pathname==='/api/activity'&&req.method==='GET'){const r=await pool.query('select a.*,u.display_name,u.email from shopping_app.activity a join shopping_app.users u on u.id=a.user_id where household_id=$1 order by created_at desc limit 200',[h.id]);return send(res,200,{activity:r.rows})}
-  if(u.pathname.startsWith('/api/'))return send(res,404,{error:'Δεν βρέθηκε η λειτουργία.'});
-  if(staticFile(req,res))return;res.writeHead(404);res.end('Not found');
+  return send(res,404,{error:'Δεν βρέθηκε η λειτουργία.'});
  }catch(e){console.error(e);send(res,500,{error:'Κάτι πήγε στραβά. Δοκίμασε ξανά.'})}
 });
 init().then(()=>server.listen(PORT,'0.0.0.0',()=>console.log('listening',PORT))).catch(e=>{console.error(e);process.exit(1)});
