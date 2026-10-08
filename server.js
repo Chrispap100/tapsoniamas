@@ -347,13 +347,15 @@ const server=http.createServer(async(req,res)=>{
     if(Object.prototype.hasOwnProperty.call(b,'status')&&!['active','purchased','deleted'].includes(b.status))return send(res,400,{error:'Μη έγκυρη κατάσταση προϊόντος.'});
     const expectedVersion=Number(b.version);
     if(!Number.isInteger(expectedVersion)||expectedVersion<1)return send(res,400,{error:'Λείπει η έκδοση του προϊόντος. Ανανέωσε τη λίστα και δοκίμασε ξανά.'});
-    for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(k+'=
+    for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(k+'=$'+(n++));vals.push(b[k])}
     sets.push('updated_at=now()','version=version+1');
     if(b.status==='purchased')sets.push('purchased_at=now()');
     if(b.status==='active')sets.push('purchased_at=null','deleted_at=null','deleted_by=null');
-    if(b.status==='deleted'){sets.push('deleted_at=now()');sets.push('deleted_by=
+    if(b.status==='deleted'){sets.push('deleted_at=now()');sets.push('deleted_by=$'+(n++));vals.push(user.id)}
     vals.push(item.id,expectedVersion);
-    const idParam=n++, versionParam=n; const r=await pool.query('update shopping_app.items set '+sets.join(',')+' where id=
+    const idParam=n++,versionParam=n;
+    const sql='update shopping_app.items set '+sets.join(',')+' where id=$'+idParam+' and version=$'+versionParam+' returning *';
+    const r=await pool.query(sql,vals);
     if(!r.rowCount){
       const latest=await pool.query('select * from shopping_app.items where id=$1',[item.id]);
       return send(res,409,{error:'Το προϊόν άλλαξε από άλλον χρήστη. Φόρτωσα την τελευταία έκδοση.',item:latest.rows[0]||null});
