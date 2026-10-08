@@ -11,3 +11,5 @@ dialog{border:0;padding:0;background:transparent}dialog::backdrop{background:rgb
 button:disabled{cursor:not-allowed;opacity:.55}
 #bottomNav{grid-template-columns:repeat(auto-fit,minmax(70px,1fr))}
 @media(max-width:520px){.list-toolbar{grid-template-columns:1fr}.list-toolbar .secondary{width:100%}.user-card{padding:12px}.member-box{align-items:stretch}.chip{width:100%;text-align:left}}
+
+.badge{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--danger);color:#fff;font-size:.68rem;line-height:1}.badge[hidden]{display:none}
