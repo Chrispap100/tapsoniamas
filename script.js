@@ -163,7 +163,7 @@ async function addItem(){
     if(!navigator.onLine||e instanceof TypeError){
       const temp={id:'local-'+crypto.randomUUID(),list_id:selectedList.id,name:p.name,quantity:p.quantity,unit:p.unit,category:'Άλλα',store:'',note:'',priority:'normal',status:'active',version:1,created_at:new Date().toISOString()};
       items.unshift(temp);render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});
-      await OfflineStore.enqueue({method:'POST',path:'/items?listId='+encodeURIComponent(selectedList.id),body:{name:p.name,quantity:p.quantity,unit:p.unit},listId:selectedList.id}).catch(()=>{});
+      const queued=await OfflineStore.enqueue({method:'POST',path:'/items?listId='+encodeURIComponent(selectedList.id),body:{name:p.name,quantity:p.quantity,unit:p.unit},listId:selectedList.id}).catch(()=>null);if(queued)temp.queueId=queued.id;
       el.value='';setSyncState('offline');toast('Αποθηκεύτηκε offline και θα συγχρονιστεί.');
     }else toast(e.message);
   }
@@ -172,7 +172,9 @@ async function addItem(){
 async function patch(item,changes){
   if(!canWriteCurrent())return toast('Αυτή η προσωπική λίστα είναι μόνο για προβολή.');
   if(String(item.id).startsWith('local-')){
-    Object.assign(item,changes);render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});return;
+    Object.assign(item,changes);
+    if(item.queueId)await OfflineStore.mergeQueuedBody(item.queueId,changes).catch(()=>{});
+    render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});return;
   }
   try{
     await api('/items/'+item.id,{method:'PATCH',body:JSON.stringify({...changes,version:item.version})});
