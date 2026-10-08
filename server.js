@@ -46,6 +46,16 @@ async function init(){
    primary key(user_id,household_id)
  );
 
+ create table if not exists shopping_app.sessions(
+   token_hash text primary key,
+   user_id uuid not null references shopping_app.users(id) on delete cascade,
+   expires_at timestamptz not null,
+   created_at timestamptz not null default now(),
+   revoked_at timestamptz
+ );
+ create index if not exists sessions_user_idx on shopping_app.sessions(user_id);
+ create index if not exists sessions_expiry_idx on shopping_app.sessions(expires_at);
+
  create table if not exists shopping_app.lists(
    id uuid primary key,
    household_id uuid not null references shopping_app.households(id) on delete cascade,
@@ -124,8 +134,22 @@ async function init(){
 }
 
 function send(res,status,data,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true',...headers});res.end(JSON.stringify(data))}
-function token(req){const h=req.headers.authorization||'';if(h.startsWith('Bearer '))return h.slice(7);try{return new URL(req.url,'http://localhost').searchParams.get('token')}catch{return null}}
-function auth(req){try{return jwt.verify(token(req),JWT_SECRET)}catch{return null}}
+function cookies(req){const out={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)out[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim())}return out}
+function tokenHash(v){return crypto.createHash('sha256').update(v).digest('hex')}
+async function createSession(userId){
+ const raw=crypto.randomBytes(32).toString('base64url');
+ await pool.query("insert into shopping_app.sessions(token_hash,user_id,expires_at) values($1,$2,now()+interval '7 days')",[tokenHash(raw),userId]);
+ return raw;
+}
+async function sessionUser(req){
+ const raw=cookies(req).psonia_session;if(!raw)return null;
+ const r=await pool.query(`select u.id,u.email,u.display_name,u.status,u.app_role,u.last_login_at,u.created_at,s.token_hash
+ from shopping_app.sessions s join shopping_app.users u on u.id=s.user_id
+ where s.token_hash=$1 and s.revoked_at is null and s.expires_at>now()`,[tokenHash(raw)]);
+ return r.rows[0]||null;
+}
+function sessionCookie(raw){return `psonia_session=${encodeURIComponent(raw)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`}
+function clearSessionCookie(){return 'psonia_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0'}
 async function body(req){return new Promise((resolve,reject)=>{let b='';req.on('data',d=>{b+=d;if(b.length>1e6)req.destroy()});req.on('end',()=>{try{resolve(b?JSON.parse(b):{})}catch{reject(new Error('invalid_json'))}});req.on('error',reject)})}
 async function currentUser(userId){const r=await pool.query('select id,email,display_name,status,app_role,last_login_at,created_at from shopping_app.users where id=$1',[userId]);return r.rows[0]||null}
 async function firstHousehold(userId){const r=await pool.query(`select h.id,h.name,h.invite_code,m.role from shopping_app.memberships m join shopping_app.households h on h.id=m.household_id where m.user_id=$1 order by m.created_at limit 1`,[userId]);return r.rows[0]||null}
@@ -188,13 +212,25 @@ const server=http.createServer(async(req,res)=>{
     if(user.status==='pending')return send(res,403,{error:'Ο λογαριασμός σου περιμένει έγκριση από τον διαχειριστή.',status:'pending'});
     if(user.status!=='active')return send(res,403,{error:'Ο λογαριασμός δεν είναι ενεργός.',status:user.status});
     await pool.query('update shopping_app.users set last_login_at=now() where id=$1',[user.id]);
-    const t=jwt.sign({sub:user.id,email:user.email},JWT_SECRET,{expiresIn:'30d'});
-    return send(res,200,{token:t,user:{id:user.id,email:user.email,displayName:user.display_name,role:user.app_role}});
+    const raw=await createSession(user.id);
+    return send(res,200,{user:{id:user.id,email:user.email,displayName:user.display_name,role:user.app_role}}, {'set-cookie':sessionCookie(raw),'cache-control':'no-store'});
   }
 
   if(!u.pathname.startsWith('/api/')){if(staticFile(req,res))return;res.writeHead(404);return res.end('Not found')}
-  const a=auth(req);if(!a)return send(res,401,{error:'Χρειάζεται σύνδεση.'});
-  const user=await currentUser(a.sub);if(!user||user.status!=='active')return send(res,403,{error:'Ο λογαριασμός δεν είναι ενεργός.'});
+
+  if(u.pathname==='/api/logout'&&req.method==='POST'){
+    const raw=cookies(req).psonia_session;
+    if(raw)await pool.query('update shopping_app.sessions set revoked_at=now() where token_hash=$1',[tokenHash(raw)]);
+    return send(res,200,{ok:true},{'set-cookie':clearSessionCookie(),'cache-control':'no-store'});
+  }
+
+  const user=await sessionUser(req);if(!user)return send(res,401,{error:'Η συνεδρία σου έληξε. Συνδέσου ξανά.'},{'set-cookie':clearSessionCookie(),'cache-control':'no-store'});
+  if(user.status!=='active')return send(res,403,{error:'Ο λογαριασμός δεν είναι ενεργός.'});
+
+  if(u.pathname==='/api/logout-all'&&req.method==='POST'){
+    await pool.query('update shopping_app.sessions set revoked_at=now() where user_id=$1 and revoked_at is null',[user.id]);
+    return send(res,200,{ok:true},{'set-cookie':clearSessionCookie(),'cache-control':'no-store'});
+  }
 
   if(u.pathname==='/api/me'&&req.method==='GET'){
     const h=await firstHousehold(user.id);
