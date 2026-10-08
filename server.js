@@ -69,6 +69,7 @@ async function init(){
  );
  create index if not exists sessions_user_idx on shopping_app.sessions(user_id);
  create index if not exists sessions_expiry_idx on shopping_app.sessions(expires_at);
+ delete from shopping_app.sessions where expires_at < now() or (revoked_at is not null and revoked_at < now()-interval '30 days');
 
  create table if not exists shopping_app.lists(
    id uuid primary key,
@@ -220,9 +221,9 @@ const server=http.createServer(async(req,res)=>{
     if(limited('signup:'+clientIp(req),8,15*60*1000))return send(res,429,{error:'Έγιναν πολλές προσπάθειες. Δοκίμασε ξανά αργότερα.'});
     if(!b.email||!b.password||String(b.password).length<6||!String(b.displayName||'').trim())return send(res,400,{error:'Χρειάζεται όνομα, email και κωδικός τουλάχιστον 6 χαρακτήρων.'});
     const id=crypto.randomUUID(),hash=await bcrypt.hash(String(b.password),12);
-    try{await pool.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,'pending','user')`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim()]);}
-    catch(e){if(e.code==='23505')return send(res,409,{error:'Υπάρχει ήδη λογαριασμός με αυτό το email.'});throw e}
-    return send(res,201,{pending:true,message:'Η εγγραφή ολοκληρώθηκε και περιμένει έγκριση από τον διαχειριστή.'});
+    try{await pool.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,'pending','user')`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim().slice(0,80)]);}
+    catch(e){if(e.code!=='23505')throw e}
+    return send(res,201,{pending:true,message:'Αν τα στοιχεία είναι διαθέσιμα, η εγγραφή καταχωρήθηκε και περιμένει έγκριση από τον διαχειριστή.'});
   }
 
   if(u.pathname==='/api/login'&&req.method==='POST'){
@@ -411,9 +412,12 @@ const server=http.createServer(async(req,res)=>{
   if(u.pathname==='/api/items'&&req.method==='POST'){
     if(!list||!(await canWriteList(user,list)))return send(res,403,{error:'Δεν μπορείς να αλλάξεις αυτή τη λίστα.'});
     const b=await body(req),name=String(b.name||'').trim();
-    if(!name)return send(res,400,{error:'Γράψε όνομα προϊόντος.'});
+    const quantity=Number(b.quantity??1);
+    if(!name||name.length>120)return send(res,400,{error:'Το όνομα προϊόντος πρέπει να είναι από 1 έως 120 χαρακτήρες.'});
+    if(!Number.isFinite(quantity)||quantity<=0||quantity>100000)return send(res,400,{error:'Η ποσότητα δεν είναι έγκυρη.'});
+    if(String(b.note||'').length>1000||String(b.store||'').length>120||String(b.unit||'').length>40)return send(res,400,{error:'Κάποιο πεδίο είναι μεγαλύτερο από το επιτρεπτό.'});
     const iid=crypto.randomUUID();
-    const r=await pool.query(`insert into shopping_app.items(id,household_id,list_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,[iid,list.household_id,list.id,name,b.quantity||1,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',user.id]);
+    const r=await pool.query(`insert into shopping_app.items(id,household_id,list_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,[iid,list.household_id,list.id,name,quantity,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',user.id]);
     await log(list.household_id,list.id,user.id,'add',name);emit(list.id,{type:'items_changed'});return send(res,201,{item:r.rows[0]});
   }
 
@@ -424,6 +428,10 @@ const server=http.createServer(async(req,res)=>{
     const itemList={id:item.list_id,household_id:item.household_id,type:item.type,owner_user_id:item.owner_user_id,admin_visible:item.admin_visible};
     if(!(await canWriteList(user,itemList)))return send(res,403,{error:'Δεν μπορείς να αλλάξεις αυτή τη λίστα.'});
     const b=await body(req),allowed=['name','quantity','unit','category','store','note','priority','status'],sets=[],vals=[];let n=1;
+    if(Object.prototype.hasOwnProperty.call(b,'name')&&(!String(b.name).trim()||String(b.name).length>120))return send(res,400,{error:'Μη έγκυρο όνομα προϊόντος.'});
+    if(Object.prototype.hasOwnProperty.call(b,'quantity')&&(!Number.isFinite(Number(b.quantity))||Number(b.quantity)<=0||Number(b.quantity)>100000))return send(res,400,{error:'Μη έγκυρη ποσότητα.'});
+    if(Object.prototype.hasOwnProperty.call(b,'note')&&String(b.note).length>1000)return send(res,400,{error:'Η σημείωση είναι πολύ μεγάλη.'});
+    if(Object.prototype.hasOwnProperty.call(b,'status')&&!['active','purchased','deleted'].includes(b.status))return send(res,400,{error:'Μη έγκυρη κατάσταση προϊόντος.'});
     const expectedVersion=Number(b.version);
     if(!Number.isInteger(expectedVersion)||expectedVersion<1)return send(res,400,{error:'Λείπει η έκδοση του προϊόντος. Ανανέωσε τη λίστα και δοκίμασε ξανά.'});
     for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=${n++}`);vals.push(b[k])}
