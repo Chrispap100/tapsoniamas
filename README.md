@@ -1,58 +1,87 @@
 # Τα Ψώνια μας
 
-Mobile-first κοινή λίστα αγορών με Node.js backend, PostgreSQL και realtime συγχρονισμό.
+Mobile-first εφαρμογή προσωπικών και κοινών λιστών αγορών.
 
-## Architecture
+## Τρέχουσα αρχιτεκτονική
 
 - Frontend: vanilla HTML/CSS/JavaScript PWA
-- Backend: Node.js HTTP API
+- Backend: Node.js
 - Database: PostgreSQL
-- Realtime: Server-Sent Events
 - Hosting: Render Web Service
+- Realtime: Server-Sent Events
+- Offline cache/queue: IndexedDB
 - Source of truth: GitHub branch `astra-shopping-app-rebuild`
 
-## Τρέχουσες λειτουργίες
+## Χρήστες και λίστες
 
-- signup / login
-- δημιουργία household
-- συμμετοχή με invite code
-- κοινά shopping items
-- add / edit / purchased / restore / soft delete
-- quantity / unit / category / store / note / priority
-- activity history
-- realtime refresh μεταξύ sessions
-- search
-- light / dark / system mode
-- PWA shell / install support
+- signup με όνομα, email και κωδικό
+- νέοι users μπαίνουν σε κατάσταση pending
+- ο admin εγκρίνει / αναστέλλει users
+- κάθε user έχει προσωπική λίστα
+- υπάρχουν πολλαπλές κοινές λίστες
+- ο admin προσθέτει/αφαιρεί users από κοινές λίστες
+- οι users δεν βλέπουν την προσωπική λίστα του admin
+- ο admin μπορεί να δει προσωπικές λίστες άλλων users μόνο ως προβολή και αυτό δηλώνεται καθαρά στο UI
+
+## Authentication / security
+
+- HttpOnly + Secure + SameSite=Lax session cookie
+- server-side session table
+- logout
+- logout από όλες τις συσκευές
+- password change με invalidation όλων των sessions
+- login/signup/join/password rate limiting
+- origin checks για state-changing requests
+- CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+- server-side list/household authorization
+- soft delete / restore
+- optimistic concurrency με item version
+- ελληνικά user-facing errors
+- npm audit μέσω CI
+
+## Offline / PWA
+
+- τελευταία λίστα αποθηκεύεται σε IndexedDB
+- offline add/edit μπαίνουν σε local mutation queue
+- replay όταν επανέλθει Internet
+- states Online / Offline / Συγχρονισμός / Αποτυχία sync
+- service worker με versioned cache
+- cleanup παλιών caches
+- API requests δεν cache-άρονται από service worker
+
+## CI
+
+GitHub Actions τρέχει σε κάθε push στο development branch:
+
+- `npm install`
+- `npm run check`
+- `npm test`
+- `npm audit --audit-level=high`
 
 ## Environment variables
 
-- `DATABASE_URL` — PostgreSQL connection string
-- `JWT_SECRET` — ισχυρό production secret
-- `APP_ORIGIN` — επιτρεπόμενο frontend origin
+- `DATABASE_URL`
+- `APP_ORIGIN=https://tapsoniamas-api.onrender.com`
 - `NODE_ENV=production`
 
-Μην κάνεις commit πραγματικά secrets.
+Πραγματικά secrets δεν πρέπει να γίνονται commit.
 
 ## Render
 
-Προτεινόμενη τρέχουσα διάταξη:
+Web Service: `tapsoniamas-api`
 
-- Render Web Service: `tapsoniamas-api`
-- Build command: `npm install`
-- Start command: `npm start`
-- Branch: `astra-shopping-app-rebuild`
+- build: `npm install`
+- start: `npm start`
+- branch: `astra-shopping-app-rebuild`
 
-Το ίδιο Web Service μπορεί να σερβίρει frontend και API.
+Το Web Service σερβίρει frontend και API από το ίδιο origin.
 
 ## Health
 
 `GET /api/health`
 
-## Γνωστό τρέχον blocker
+## Γνωστοί περιορισμοί πριν το τελικό production pass
 
-Χωρίς `DATABASE_URL`, το API ξεκινά αλλά δεν μπορεί να εκτελέσει signup/login ή να αποθηκεύσει δεδομένα.
-
-## Επόμενο pass
-
-Μετά το πρώτο end-to-end functional test θα γίνει security hardening: secure sessions, rate limiting, migrations, offline mutation queue, concurrency/versioning, CI/tests και πλήρες PWA/security audit.
+- τα PWA icons είναι ακόμη SVG· για μέγιστη συμβατότητα iOS/Android χρειάζονται PNG 192/512 και Apple touch icon
+- το full end-to-end browser test δύο πραγματικών sessions δεν μπορεί να εκτελεστεί από το τρέχον tool environment επειδή δεν επιτρέπει outbound HTTP προς το Render URL
+- πριν merge στο `main` θα γίνει τελικός permission/realtime/mobile έλεγχος
