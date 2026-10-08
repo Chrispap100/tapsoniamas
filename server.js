@@ -10,6 +10,22 @@ const DATABASE_URL=process.env.DATABASE_URL;
 const ORIGIN=process.env.APP_ORIGIN||'https://tapsoniamas-api.onrender.com';
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
 const clients=new Map();
+const rateBuckets=new Map();
+function clientIp(req){return String(req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim()}
+function limited(key,limit,windowMs){
+ const now=Date.now(),b=rateBuckets.get(key);
+ if(!b||now>b.reset){rateBuckets.set(key,{count:1,reset:now+windowMs});return false}
+ b.count++;return b.count>limit;
+}
+function securityHeaders(){
+ return {
+  'x-content-type-options':'nosniff',
+  'referrer-policy':'no-referrer',
+  'permissions-policy':'camera=(), microphone=(), geolocation=()',
+  'content-security-policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+  'strict-transport-security':'max-age=31536000; includeSubDomains'
+ };
+}
 
 async function init(){
  if(!pool)return;
@@ -91,10 +107,12 @@ async function init(){
    created_at timestamptz not null default now(),
    updated_at timestamptz not null default now(),
    purchased_at timestamptz,
+   version integer not null default 1,
    deleted_at timestamptz,
    deleted_by uuid references shopping_app.users(id)
  );
  alter table shopping_app.items add column if not exists list_id uuid references shopping_app.lists(id) on delete cascade;
+ alter table shopping_app.items add column if not exists version integer not null default 1;
  alter table shopping_app.items add column if not exists deleted_at timestamptz;
  alter table shopping_app.items add column if not exists deleted_by uuid references shopping_app.users(id);
  create index if not exists items_list_idx on shopping_app.items(list_id,status,updated_at desc);
@@ -131,7 +149,7 @@ async function init(){
  `);
 }
 
-function send(res,status,data,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true',...headers});res.end(JSON.stringify(data))}
+function send(res,status,data,headers={}){res.writeHead(status,{...securityHeaders(),'content-type':'application/json; charset=utf-8','cache-control':'no-store','access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true',...headers});res.end(JSON.stringify(data))}
 function cookies(req){const out={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)out[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim())}return out}
 function tokenHash(v){return crypto.createHash('sha256').update(v).digest('hex')}
 async function createSession(userId){
@@ -184,17 +202,22 @@ async function canWriteList(user,list){
 async function getList(id){const r=await pool.query('select * from shopping_app.lists where id=$1',[id]);return r.rows[0]||null}
 function emit(listId,event){const set=clients.get(listId);if(!set)return;for(const res of set)res.write(`data: ${JSON.stringify(event)}\n\n`)}
 async function log(hid,listId,uid,action,itemName){await pool.query('insert into shopping_app.activity(id,household_id,list_id,user_id,action,item_name) values($1,$2,$3,$4,$5,$6)',[crypto.randomUUID(),hid,listId,uid,action,itemName||null])}
-function staticFile(req,res){let p=new URL(req.url,'http://x').pathname;if(p==='/')p='/index.html';const safe=path.normalize(p).replace(/^\.\.(\/|\\|$)/,'');const file=path.join(__dirname,safe);if(!file.startsWith(__dirname)||!fs.existsSync(file)||fs.statSync(file).isDirectory())return false;const ext=path.extname(file);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};res.writeHead(200,{'content-type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);return true}
+function staticFile(req,res){let p=new URL(req.url,'http://x').pathname;if(p==='/')p='/index.html';const safe=path.normalize(p).replace(/^\.\.(\/|\\|$)/,'');const file=path.join(__dirname,safe);if(!file.startsWith(__dirname)||!fs.existsSync(file)||fs.statSync(file).isDirectory())return false;const ext=path.extname(file);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};res.writeHead(200,{...securityHeaders(),'content-type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);return true}
 
 const server=http.createServer(async(req,res)=>{
  try{
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true','access-control-allow-headers':'authorization,content-type','access-control-allow-methods':'GET,POST,PATCH,DELETE,OPTIONS'});return res.end()}
   const u=new URL(req.url,'http://localhost');
+  if(['POST','PATCH','DELETE'].includes(req.method)){
+    const origin=req.headers.origin;
+    if(origin&&origin!==ORIGIN)return send(res,403,{error:'Το αίτημα απορρίφθηκε για λόγους ασφαλείας.'});
+  }
   if(u.pathname==='/api/health')return send(res,200,{ok:true,database:!!pool});
   if(!pool&&u.pathname.startsWith('/api/'))return send(res,503,{error:'Η βάση δεδομένων δεν έχει συνδεθεί ακόμη.'});
 
   if(u.pathname==='/api/signup'&&req.method==='POST'){
     const b=await body(req);
+    if(limited('signup:'+clientIp(req),8,15*60*1000))return send(res,429,{error:'Έγιναν πολλές προσπάθειες. Δοκίμασε ξανά αργότερα.'});
     if(!b.email||!b.password||String(b.password).length<6||!String(b.displayName||'').trim())return send(res,400,{error:'Χρειάζεται όνομα, email και κωδικός τουλάχιστον 6 χαρακτήρων.'});
     const id=crypto.randomUUID(),hash=await bcrypt.hash(String(b.password),12);
     try{await pool.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,'pending','user')`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim()]);}
@@ -204,6 +227,8 @@ const server=http.createServer(async(req,res)=>{
 
   if(u.pathname==='/api/login'&&req.method==='POST'){
     const b=await body(req);
+    const emailKey=String(b.email||'').toLowerCase();
+    if(limited('login-ip:'+clientIp(req),20,15*60*1000)||limited('login-email:'+emailKey,10,15*60*1000))return send(res,429,{error:'Έγιναν πολλές προσπάθειες σύνδεσης. Δοκίμασε ξανά αργότερα.'});
     const r=await pool.query('select * from shopping_app.users where email=$1',[String(b.email||'').toLowerCase()]);
     const user=r.rows[0];
     if(!user||!(await bcrypt.compare(String(b.password||''),user.password_hash)))return send(res,401,{error:'Λάθος email ή κωδικός.'});
@@ -254,6 +279,7 @@ const server=http.createServer(async(req,res)=>{
 
   if(u.pathname==='/api/households/join'&&req.method==='POST'){
     const b=await body(req);
+    if(limited('join:'+clientIp(req),20,15*60*1000))return send(res,429,{error:'Πάρα πολλές προσπάθειες κωδικού πρόσκλησης. Δοκίμασε αργότερα.'});
     const r=await pool.query('select id,name,invite_code from shopping_app.households where invite_code=$1',[String(b.inviteCode||'').toUpperCase()]);
     if(!r.rowCount)return send(res,404,{error:'Ο κωδικός πρόσκλησης δεν βρέθηκε.'});
     await pool.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'member') on conflict do nothing",[user.id,r.rows[0].id]);
@@ -372,13 +398,19 @@ const server=http.createServer(async(req,res)=>{
     const itemList={id:item.list_id,household_id:item.household_id,type:item.type,owner_user_id:item.owner_user_id,admin_visible:item.admin_visible};
     if(!(await canWriteList(user,itemList)))return send(res,403,{error:'Δεν μπορείς να αλλάξεις αυτή τη λίστα.'});
     const b=await body(req),allowed=['name','quantity','unit','category','store','note','priority','status'],sets=[],vals=[];let n=1;
-    for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=$${n++}`);vals.push(b[k])}
-    sets.push('updated_at=now()');
+    const expectedVersion=Number(b.version);
+    if(!Number.isInteger(expectedVersion)||expectedVersion<1)return send(res,400,{error:'Λείπει η έκδοση του προϊόντος. Ανανέωσε τη λίστα και δοκίμασε ξανά.'});
+    for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=${n++}`);vals.push(b[k])}
+    sets.push('updated_at=now()','version=version+1');
     if(b.status==='purchased')sets.push('purchased_at=now()');
     if(b.status==='active')sets.push('purchased_at=null','deleted_at=null','deleted_by=null');
-    if(b.status==='deleted'){sets.push('deleted_at=now()');sets.push(`deleted_by=$${n++}`);vals.push(user.id)}
-    vals.push(item.id);
-    const r=await pool.query(`update shopping_app.items set ${sets.join(',')} where id=$${n} returning *`,vals);
+    if(b.status==='deleted'){sets.push('deleted_at=now()');sets.push(`deleted_by=${n++}`);vals.push(user.id)}
+    vals.push(item.id,expectedVersion);
+    const r=await pool.query(`update shopping_app.items set ${sets.join(',')} where id=${n++} and version=${n} returning *`,vals);
+    if(!r.rowCount){
+      const latest=await pool.query('select * from shopping_app.items where id=$1',[item.id]);
+      return send(res,409,{error:'Το προϊόν άλλαξε από άλλον χρήστη. Φόρτωσα την τελευταία έκδοση.',item:latest.rows[0]||null});
+    }
     await log(item.household_id,item.list_id,user.id,'update',r.rows[0].name);emit(item.list_id,{type:'items_changed'});return send(res,200,{item:r.rows[0]});
   }
 
