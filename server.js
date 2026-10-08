@@ -203,18 +203,19 @@ const server=http.createServer(async(req,res)=>{
 
   if(u.pathname==='/api/households'&&req.method==='POST'){
     const b=await body(req),hid=crypto.randomUUID(),code=crypto.randomBytes(6).toString('hex').toUpperCase();
-    await pool.query('begin');
+    const client=await pool.connect();
     try{
-      await pool.query('insert into shopping_app.households(id,name,invite_code,created_by) values($1,$2,$3,$4)',[hid,b.name||'Το σπίτι μας',code,user.id]);
-      await pool.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'owner') on conflict do nothing",[user.id,hid]);
-      await pool.query("update shopping_app.users set app_role='admin',status='active' where id=$1",[user.id]);
+      await client.query('begin');
+      await client.query('insert into shopping_app.households(id,name,invite_code,created_by) values($1,$2,$3,$4)',[hid,b.name||'Το σπίτι μας',code,user.id]);
+      await client.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'owner') on conflict do nothing",[user.id,hid]);
+      await client.query("update shopping_app.users set app_role='admin',status='active' where id=$1",[user.id]);
       const lid=crypto.randomUUID();
-      await pool.query(`insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by) values($1,$2,null,'Κοινή λίστα','shared',true,$3)`,[lid,hid,user.id]);
-      await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'owner')",[lid,user.id]);
-      await pool.query('commit');
+      await client.query(`insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by) values($1,$2,null,'Κοινή λίστα','shared',true,$3)`,[lid,hid,user.id]);
+      await client.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'owner')",[lid,user.id]);
+      await client.query('commit');
       await ensurePersonalList(user.id,hid);
       return send(res,201,{id:hid,name:b.name||'Το σπίτι μας',inviteCode:code});
-    }catch(e){await pool.query('rollback');throw e}
+    }catch(e){await client.query('rollback');throw e}finally{client.release()}
   }
 
   if(u.pathname==='/api/households/join'&&req.method==='POST'){
