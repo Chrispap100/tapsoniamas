@@ -5,8 +5,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check script.js",
-    "test": "node --test"
+    "check": "node --check server.js && node --check script.js && node --check offline.js && node --check migrate.js",
+    "test": "node --test",
+    "migrate": "node -e \"const {Pool}=require('pg'); const {runMigrations}=require('./migrate'); const p=new Pool({connectionString:process.env.DATABASE_URL,ssl:{rejectUnauthorized:false}}); runMigrations(p).then(()=>p.end()).catch(e=>{console.error(e);process.exit(1)})\""
   },
   "engines": {
     "node": ">=20"
