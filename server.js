@@ -3,11 +3,9 @@ const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 const bcrypt=require('bcryptjs');
-const jwt=require('jsonwebtoken');
 const {Pool}=require('pg');
 
 const PORT=process.env.PORT||10000;
-const JWT_SECRET=process.env.JWT_SECRET||crypto.randomBytes(48).toString('hex');
 const DATABASE_URL=process.env.DATABASE_URL;
 const ORIGIN=process.env.APP_ORIGIN||'https://tapsoniamas-api.onrender.com';
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
