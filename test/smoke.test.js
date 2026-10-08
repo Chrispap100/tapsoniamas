@@ -40,3 +40,12 @@ test('server uses HttpOnly secure cookie sessions',()=>{
   assert.match(src,/shopping_app\.sessions/);
   assert.doesNotMatch(src,/jsonwebtoken/);
 });
+
+test('offline queue and PWA protections are present',()=>{
+  const offline=fs.readFileSync('offline.js','utf8');
+  const sw=fs.readFileSync('sw.js','utf8');
+  assert.match(offline,/indexedDB\.open/);
+  assert.match(offline,/queue/);
+  assert.match(sw,/pathname\.startsWith\('\/api\/'\)/);
+  assert.match(sw,/caches\.delete/);
+});
