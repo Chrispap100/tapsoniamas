@@ -1,5 +1,5 @@
 'use strict';
-const API='https://tapsoniamas-api.onrender.com/api';
+const API=location.hostname==='tapsoniamas-preview.onrender.com'?'https://tapsoniamas-api.onrender.com/api':'/api';
 const categories=['Άλλα','Φρούτα','Λαχανικά','Κρέας','Ψάρια','Γαλακτοκομικά','Αρτοποιείο','Ποτά','Κατεψυγμένα','Καθαριστικά','Χαρτικά','Προσωπική φροντίδα','Σπίτι'];
 const stores=['','Super Market','Lidl','Μανάβικο','Κρεοπωλείο','Φαρμακείο','Jumbo','Άλλο'];
 const units=['κιλά','κιλό','kg','γρ','γραμμάρια','τεμάχια','τεμάχιο','μπουκάλια','μπουκάλι','πακέτα','πακέτο'];
