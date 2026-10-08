@@ -9,7 +9,7 @@ const {runMigrations}=require('./migrate');
 const PORT=process.env.PORT||10000;
 const DATABASE_URL=process.env.DATABASE_URL;
 const ORIGIN=process.env.APP_ORIGIN||'https://tapsoniamas-api.onrender.com';
-const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
+const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:process.env.PGSSL==='disable'?false:{rejectUnauthorized:false}}):null;
 const clients=new Map();
 const rateBuckets=new Map();
 function clientIp(req){return String(req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim()}
