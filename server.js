@@ -230,6 +230,7 @@ const server=http.createServer(async(req,res)=>{
 
   if(u.pathname==='/api/lists'&&req.method==='GET'){
     if(!h)return send(res,200,{lists:[]});
+    await ensurePersonalList(user.id,h.id);
     const admin=await isHouseholdAdmin(user.id,h.id);
     const r=await pool.query(`
       select distinct l.*,u.display_name as owner_name
@@ -267,7 +268,8 @@ const server=http.createServer(async(req,res)=>{
     if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να δει τους χρήστες.'});
     const r=await pool.query(`
       select u.id,u.email,u.display_name,u.status,u.app_role,u.last_login_at,u.created_at,
-      exists(select 1 from shopping_app.memberships m where m.user_id=u.id and m.household_id=$1) as in_household
+      exists(select 1 from shopping_app.memberships m where m.user_id=u.id and m.household_id=$1) as in_household,
+      coalesce((select json_agg(lm.list_id) from shopping_app.list_memberships lm join shopping_app.lists l on l.id=lm.list_id where lm.user_id=u.id and l.household_id=$1),'[]'::json) as list_ids
       from shopping_app.users u order by u.created_at desc
     `,[h.id]);
     return send(res,200,{users:r.rows});
