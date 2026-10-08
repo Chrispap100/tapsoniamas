@@ -158,9 +158,16 @@ async function addItem(){
 async function patch(item,changes){
   if(!canWriteCurrent())return toast('Αυτή η προσωπική λίστα είναι μόνο για προβολή.');
   try{
-    await api('/items/'+item.id,{method:'PATCH',body:JSON.stringify(changes)});
+    await api('/items/'+item.id,{method:'PATCH',body:JSON.stringify({...changes,version:item.version})});
     await loadItems();
-  }catch(e){toast(e.message)}
+  }catch(e){
+    if(e.status===409){
+      toast(e.message);
+      await loadItems().catch(()=>{});
+      return;
+    }
+    toast(e.message);
+  }
 }
 
 function makeItem(item){
