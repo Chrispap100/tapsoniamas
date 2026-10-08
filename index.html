@@ -2,22 +2,22 @@
 <html lang="el">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e"><meta name="description" content="Η κοινή λίστα αγορών μας">
+  <meta name="theme-color" content="#0f766e"><meta name="description" content="Η κοινή και προσωπική λίστα αγορών μας">
   <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css">
   <title>Τα Ψώνια μας</title>
 </head>
 <body>
   <main class="shell">
     <section id="authView" class="auth-card">
-      <h1>🛒 Τα Ψώνια μας</h1><p>Κοινή λίστα αγορών για το σπίτι.</p>
+      <h1>🛒 Τα Ψώνια μας</h1><p>Προσωπικές και κοινές λίστες αγορών.</p>
       <div class="seg"><button id="showLogin" class="active">Σύνδεση</button><button id="showSignup">Εγγραφή</button></div>
       <form id="loginForm"><input id="loginEmail" type="email" placeholder="Email" required><input id="loginPassword" type="password" placeholder="Κωδικός" required><button>Σύνδεση</button></form>
-      <form id="signupForm" hidden><input id="signupName" placeholder="Όνομα"><input id="signupEmail" type="email" placeholder="Email" required><input id="signupPassword" type="password" minlength="6" placeholder="Κωδικός (6+ χαρακτήρες)" required><button>Δημιουργία λογαριασμού</button></form>
+      <form id="signupForm" hidden><input id="signupName" placeholder="Όνομα" required><input id="signupEmail" type="email" placeholder="Email" required><input id="signupPassword" type="password" minlength="6" placeholder="Κωδικός (6+ χαρακτήρες)" required><button>Δημιουργία λογαριασμού</button></form>
       <div id="authError" class="error" hidden></div>
     </section>
 
     <section id="householdView" class="auth-card" hidden>
-      <h1>Το κοινό σας σπίτι</h1><p>Δημιούργησε νέα κοινή λίστα ή μπες με κωδικό πρόσκλησης.</p>
+      <h1>Το κοινό σας σπίτι</h1><p>Δημιούργησε νέο χώρο ή μπες με κωδικό πρόσκλησης.</p>
       <div class="stack"><input id="houseName" placeholder="π.χ. Το σπίτι μας"><button id="createHouse">Δημιουργία</button><div class="or">ή</div><input id="inviteCode" placeholder="Κωδικός πρόσκλησης"><button id="joinHouse" class="secondary">Συμμετοχή</button></div>
       <div id="houseError" class="error" hidden></div>
     </section>
@@ -27,6 +27,15 @@
         <div><h1>🛒 Τα Ψώνια μας</h1><p id="summary">0 προς αγορά • 0 αγορασμένα</p><small id="houseMeta"></small></div>
         <div class="header-actions"><span id="network" class="status ok">● Online</span><button id="logoutBtn" class="icon-btn" title="Αποσύνδεση">↪</button></div>
       </header>
+
+      <section class="list-toolbar">
+        <label>Λίστα
+          <select id="listSelect"></select>
+        </label>
+        <button id="newSharedListBtn" class="secondary">+ Κοινή λίστα</button>
+      </section>
+      <div id="privacyNotice" class="notice compact" hidden></div>
+
       <section id="listView">
         <div class="add"><input id="quickInput" autocomplete="off" placeholder="π.χ. 2 γάλατα" aria-label="Γρήγορη προσθήκη"><button id="addBtn">Προσθήκη</button></div>
         <input id="search" class="search" placeholder="Αναζήτηση..." aria-label="Αναζήτηση">
@@ -34,15 +43,38 @@
         <section id="purchasedSection" hidden><div class="section-title"><h2>Αγορασμένα</h2><button id="clearPurchased" class="link">Καθαρισμός</button></div><div id="purchasedList"></div></section>
         <details id="trashSection" hidden><summary id="trashSummary">Πρόσφατα διαγραμμένα</summary><div id="trashList"></div></details>
       </section>
+
       <section id="historyView" hidden><h2>Ιστορικό</h2><div id="historyList"></div></section>
+
+      <section id="adminView" hidden>
+        <div class="section-title"><h2>Χρήστες</h2><button id="refreshUsers" class="secondary small">Ανανέωση</button></div>
+        <p class="muted">Νέες εγγραφές περιμένουν έγκριση πριν αποκτήσουν πρόσβαση.</p>
+        <div id="usersList"></div>
+      </section>
+
       <section id="settingsView" hidden><h2>Ρυθμίσεις</h2><div class="settings">
         <div class="notice"><strong>Κωδικός πρόσκλησης</strong><p id="inviteDisplay">—</p></div>
         <label>Εμφάνιση<select id="theme"><option value="system">Σύστημα</option><option value="light">Φωτεινό</option><option value="dark">Σκούρο</option></select></label>
         <button id="installBtn" class="secondary" hidden>Εγκατάσταση εφαρμογής</button>
       </div></section>
-      <nav><button data-tab="list" class="active">🛒<span>Λίστα</span></button><button data-tab="history">🕘<span>Ιστορικό</span></button><button data-tab="settings">⚙️<span>Ρυθμίσεις</span></button></nav>
+
+      <nav id="bottomNav">
+        <button data-tab="list" class="active">🛒<span>Λίστα</span></button>
+        <button data-tab="history">🕘<span>Ιστορικό</span></button>
+        <button id="adminNavBtn" data-tab="admin" hidden>👥<span>Χρήστες</span></button>
+        <button data-tab="settings">⚙️<span>Ρυθμίσεις</span></button>
+      </nav>
     </section>
   </main>
+
+  <dialog id="sharedListDialog">
+    <form method="dialog" class="dialog-card">
+      <h3>Νέα κοινή λίστα</h3>
+      <input id="sharedListName" placeholder="π.χ. Εβδομαδιαία ψώνια" maxlength="80">
+      <div class="dialog-actions"><button value="cancel" class="secondary">Άκυρο</button><button id="createSharedList" value="default">Δημιουργία</button></div>
+    </form>
+  </dialog>
+
   <template id="itemTemplate"><article class="item"><button class="check"></button><div class="item-main"><strong></strong><span></span><small></small></div><button class="icon"></button><div class="editor" hidden></div></article></template>
   <div id="toast" class="toast" hidden></div>
   <script src="script.js" defer></script>
