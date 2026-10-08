@@ -234,6 +234,7 @@ async function loadUsers(){
 }
 
 function renderUsers(users){
+  const pending=users.filter(u=>u.status==='pending').length;const badge=$('#pendingCount');badge.textContent=String(pending);badge.hidden=!pending;
   const wrap=$('#usersList');wrap.innerHTML='';
   const sharedLists=lists.filter(l=>l.type==='shared');
   if(!users.length){wrap.innerHTML='<div class="empty">Δεν υπάρχουν χρήστες.</div>';return}
@@ -382,4 +383,4 @@ addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$
 $('#installBtn').onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('#installBtn').hidden=true};
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-updateNetwork();boot().then(()=>{if(navigator.onLine)replayQueue().catch(()=>{})});
+updateNetwork();boot().then(()=>{if(navigator.onLine)replayQueue().catch(()=>{});setInterval(()=>{if(me?.role==='admin')loadUsers().catch(()=>{})},30000)});
