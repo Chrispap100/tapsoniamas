@@ -255,6 +255,23 @@ const server=http.createServer(async(req,res)=>{
     return send(res,200,{ok:true},{'set-cookie':clearSessionCookie(),'cache-control':'no-store'});
   }
 
+  if(u.pathname==='/api/password'&&req.method==='POST'){
+    const b=await body(req);
+    if(limited('password:'+user.id,5,30*60*1000))return send(res,429,{error:'Έγιναν πολλές προσπάθειες αλλαγής κωδικού. Δοκίμασε αργότερα.'});
+    if(String(b.newPassword||'').length<8)return send(res,400,{error:'Ο νέος κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.'});
+    const r=await pool.query('select password_hash from shopping_app.users where id=$1',[user.id]);
+    if(!r.rowCount||!(await bcrypt.compare(String(b.currentPassword||''),r.rows[0].password_hash)))return send(res,400,{error:'Ο τρέχων κωδικός δεν είναι σωστός.'});
+    const hash=await bcrypt.hash(String(b.newPassword),12);
+    const client=await pool.connect();
+    try{
+      await client.query('begin');
+      await client.query('update shopping_app.users set password_hash=$1 where id=$2',[hash,user.id]);
+      await client.query('update shopping_app.sessions set revoked_at=now() where user_id=$1 and revoked_at is null',[user.id]);
+      await client.query('commit');
+    }catch(e){await client.query('rollback');throw e}finally{client.release()}
+    return send(res,200,{ok:true,message:'Ο κωδικός άλλαξε. Συνδέσου ξανά.'},{'set-cookie':clearSessionCookie()});
+  }
+
   if(u.pathname==='/api/me'&&req.method==='GET'){
     const h=await firstHousehold(user.id);
     return send(res,200,{user:{id:user.id,email:user.email,displayName:user.display_name,role:user.app_role,status:user.status},household:h});
@@ -362,6 +379,15 @@ const server=http.createServer(async(req,res)=>{
     const list=await getList(memberMatch[1]);if(!list||list.household_id!==h.id||list.type!=='shared')return send(res,404,{error:'Η κοινή λίστα δεν βρέθηκε.'});
     const b=await body(req);
     await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'member') on conflict do nothing",[list.id,b.userId]);
+    return send(res,200,{ok:true});
+  }
+
+  if(memberMatch&&req.method==='DELETE'){
+    if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να αφαιρεί μέλη από λίστα.'});
+    const list=await getList(memberMatch[1]);if(!list||list.household_id!==h.id||list.type!=='shared')return send(res,404,{error:'Η κοινή λίστα δεν βρέθηκε.'});
+    const b=await body(req);
+    if(String(b.userId||'')===String(user.id))return send(res,400,{error:'Δεν μπορείς να αφαιρέσεις τον εαυτό σου από εδώ.'});
+    await pool.query('delete from shopping_app.list_memberships where list_id=$1 and user_id=$2',[list.id,b.userId]);
     return send(res,200,{ok:true});
   }
 
