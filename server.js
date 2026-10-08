@@ -105,8 +105,20 @@ const server=http.createServer(async(req,res)=>{
     if(limited('signup:'+clientIp(req),8,15*60*1000))return send(res,429,{error:'Έγιναν πολλές προσπάθειες. Δοκίμασε ξανά αργότερα.'});
     if(!b.email||!b.password||String(b.password).length<6||!String(b.displayName||'').trim())return send(res,400,{error:'Χρειάζεται όνομα, email και κωδικός τουλάχιστον 6 χαρακτήρων.'});
     const id=crypto.randomUUID(),hash=await bcrypt.hash(String(b.password),12);
-    try{await pool.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,'pending','user')`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim().slice(0,80)]);}
-    catch(e){if(e.code!=='23505')throw e}
+    const client=await pool.connect();
+    let firstUser=false,created=false;
+    try{
+      await client.query('begin');
+      await client.query("select pg_advisory_xact_lock(847261)");
+      const count=await client.query('select count(*)::int as n from shopping_app.users');
+      firstUser=count.rows[0].n===0;
+      try{
+        await client.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,$5,$6)`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim().slice(0,80),firstUser?'active':'pending',firstUser?'admin':'user']);
+        created=true;
+      }catch(e){if(e.code!=='23505')throw e}
+      await client.query('commit');
+    }catch(e){await client.query('rollback');throw e}finally{client.release()}
+    if(firstUser&&created)return send(res,201,{pending:false,bootstrapAdmin:true,message:'Ο πρώτος διαχειριστής δημιουργήθηκε. Μπορείς τώρα να συνδεθείς και να δημιουργήσεις το σπίτι σου.'});
     return send(res,201,{pending:true,message:'Αν τα στοιχεία είναι διαθέσιμα, η εγγραφή καταχωρήθηκε και περιμένει έγκριση από τον διαχειριστή.'});
   }
 
