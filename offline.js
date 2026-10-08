@@ -14,6 +14,7 @@ const OfflineStore=(()=>{
     async enqueue(m){const row={id:crypto.randomUUID(),createdAt:Date.now(),retries:0,status:'pending',...m};await tx('queue','readwrite',s=>s.put(row));return row},
     async all(){return tx('queue','readonly',s=>s.getAll())},
     async remove(id){return tx('queue','readwrite',s=>s.delete(id))},
-    async update(row){return tx('queue','readwrite',s=>s.put(row))}
+    async update(row){return tx('queue','readwrite',s=>s.put(row))},
+    async mergeQueuedBody(id,changes){const rows=await this.all();const row=rows.find(r=>r.id===id);if(!row)return null;row.body={...(row.body||{}),...changes};await this.update(row);return row}
   };
 })();
