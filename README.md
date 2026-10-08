@@ -82,6 +82,5 @@ Web Service: `tapsoniamas-api`
 
 ## Γνωστοί περιορισμοί πριν το τελικό production pass
 
-- τα PWA icons είναι ακόμη SVG· για μέγιστη συμβατότητα iOS/Android χρειάζονται PNG 192/512 και Apple touch icon
-- το full end-to-end browser test δύο πραγματικών sessions δεν μπορεί να εκτελεστεί από το τρέχον tool environment επειδή δεν επιτρέπει outbound HTTP προς το Render URL
+- το GitHub CI εκτελεί πραγματικό end-to-end API test με δύο sessions και PostgreSQL· τελικό οπτικό/mobile acceptance γίνεται στην πραγματική συσκευή
 - πριν merge στο `main` θα γίνει τελικός permission/realtime/mobile έλεγχος
