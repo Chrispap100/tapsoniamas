@@ -15,6 +15,7 @@ const rateBuckets=new Map();
 function clientIp(req){return String(req.headers['x-forwarded-for']||req.socket.remoteAddress||'unknown').split(',')[0].trim()}
 function limited(key,limit,windowMs){
  const now=Date.now(),b=rateBuckets.get(key);
+ if(rateBuckets.size>10000){for(const [k,v] of rateBuckets)if(now>v.reset)rateBuckets.delete(k)}
  if(!b||now>b.reset){rateBuckets.set(key,{count:1,reset:now+windowMs});return false}
  b.count++;return b.count>limit;
 }
@@ -84,7 +85,7 @@ async function canWriteList(user,list){
  return false;
 }
 async function getList(id){const r=await pool.query('select * from shopping_app.lists where id=$1',[id]);return r.rows[0]||null}
-function emit(listId,event){const set=clients.get(listId);if(!set)return;for(const res of set)res.write(`data: ${JSON.stringify(event)}\n\n`)}
+function emit(listId,event){const set=clients.get(listId);if(!set)return;for(const res of [...set]){try{res.write(`data: ${JSON.stringify(event)}\n\n`)}catch{set.delete(res)}}}
 async function log(hid,listId,uid,action,itemName){await pool.query('insert into shopping_app.activity(id,household_id,list_id,user_id,action,item_name) values($1,$2,$3,$4,$5,$6)',[crypto.randomUUID(),hid,listId,uid,action,itemName||null])}
 function staticFile(req,res){let p=new URL(req.url,'http://x').pathname;if(p==='/')p='/index.html';const safe=path.normalize(p).replace(/^\.\.(\/|\\|$)/,'');const file=path.join(__dirname,safe);if(!file.startsWith(__dirname)||!fs.existsSync(file)||fs.statSync(file).isDirectory())return false;const ext=path.extname(file);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};res.writeHead(200,{...securityHeaders(),'content-type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);return true}
 
@@ -283,7 +284,8 @@ const server=http.createServer(async(req,res)=>{
     res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':ORIGIN});
     if(!clients.has(list.id))clients.set(list.id,new Set());clients.get(list.id).add(res);
     res.write('event: ready\ndata: {}\n\n');
-    req.on('close',()=>clients.get(list.id)?.delete(res));return;
+    const keepAlive=setInterval(()=>{try{res.write(': keepalive\n\n')}catch{}},25000);
+    req.on('close',()=>{clearInterval(keepAlive);clients.get(list.id)?.delete(res);if(!clients.get(list.id)?.size)clients.delete(list.id)});return;
   }
 
   if(u.pathname==='/api/items'&&req.method==='GET'){
@@ -300,8 +302,24 @@ const server=http.createServer(async(req,res)=>{
     if(!Number.isFinite(quantity)||quantity<=0||quantity>100000)return send(res,400,{error:'Η ποσότητα δεν είναι έγκυρη.'});
     if(String(b.note||'').length>1000||String(b.store||'').length>120||String(b.unit||'').length>40)return send(res,400,{error:'Κάποιο πεδίο είναι μεγαλύτερο από το επιτρεπτό.'});
     const iid=crypto.randomUUID();
-    const r=await pool.query(`insert into shopping_app.items(id,household_id,list_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,[iid,list.household_id,list.id,name,quantity,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',user.id]);
-    await log(list.household_id,list.id,user.id,'add',name);emit(list.id,{type:'items_changed'});return send(res,201,{item:r.rows[0]});
+    const client=await pool.connect();
+    try{
+      await client.query('begin');
+      await client.query("select pg_advisory_xact_lock(hashtext($1))",[list.id+':'+name.toLocaleLowerCase('el')]);
+      const existing=await client.query("select * from shopping_app.items where list_id=$1 and status='active' and lower(trim(name))=lower(trim($2)) order by created_at limit 1 for update",[list.id,name]);
+      let row,merged=false;
+      if(existing.rowCount){
+        const updated=await client.query('update shopping_app.items set quantity=quantity+$1,updated_at=now(),version=version+1 where id=$2 returning *',[quantity,existing.rows[0].id]);
+        row=updated.rows[0];merged=true;
+      }else{
+        const inserted=await client.query(`insert into shopping_app.items(id,household_id,list_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,[iid,list.household_id,list.id,name,quantity,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',user.id]);
+        row=inserted.rows[0];
+      }
+      await client.query('insert into shopping_app.activity(id,household_id,list_id,user_id,action,item_name) values($1,$2,$3,$4,$5,$6)',[crypto.randomUUID(),list.household_id,list.id,user.id,merged?'merge':'add',name]);
+      await client.query('commit');
+      emit(list.id,{type:'items_changed'});
+      return send(res,merged?200:201,{item:row,merged});
+    }catch(e){await client.query('rollback');throw e}finally{client.release()}
   }
 
   const itemMatch=u.pathname.match(/^\/api\/items\/([0-9a-f-]+)$/);
