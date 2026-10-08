@@ -5,7 +5,6 @@ const categories=['Άλλα','Φρούτα','Λαχανικά','Κρέας','Ψ�
 const stores=['','Super Market','Lidl','Μανάβικο','Κρεοπωλείο','Φαρμακείο','Jumbo','Άλλο'];
 const units=['κιλά','κιλό','kg','γρ','γραμμάρια','τεμάχια','τεμάχιο','μπουκάλια','μπουκάλι','πακέτα','πακέτο'];
 
-let token=localStorage.getItem('psonia.token')||'';
 let me=null, household=null, lists=[], selectedList=null, items=[], query='', eventSource=null, deferredPrompt=null;
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -17,22 +16,20 @@ function selectHtml(values,current){return values.map(v=>`<option ${v===current?
 
 async function api(path,opts={}){
   const headers={'content-type':'application/json',...(opts.headers||{})};
-  if(token)headers.authorization='Bearer '+token;
-  const r=await fetch(API+path,{...opts,headers});
+  const r=await fetch(API+path,{...opts,headers,credentials:'include'});
   let data={};try{data=await r.json()}catch{}
   if(!r.ok)throw Object.assign(new Error(data.error||'Κάτι πήγε στραβά.'),{status:r.status,data});
   return data;
 }
 
 async function boot(){
-  if(!token){show('#authView');return}
   try{
     const data=await api('/me');
     me=data.user;household=data.household;
     if(!household){show('#householdView');return}
     await enterApp();
   }catch(e){
-    if(e.status===401||e.status===403){localStorage.removeItem('psonia.token');token='';show('#authView')}
+    if(e.status===401||e.status===403){show('#authView')}
     else toast(e.message);
   }
 }
@@ -127,7 +124,7 @@ async function loadHistory(){
 function connectRealtime(){
   eventSource?.close();eventSource=null;
   if(!selectedList)return;
-  eventSource=new EventSource(API+`/events?listId=${encodeURIComponent(selectedList.id)}&token=${encodeURIComponent(token)}`);
+  eventSource=new EventSource(API+`/events?listId=${encodeURIComponent(selectedList.id)}`,{withCredentials:true});
   eventSource.onmessage=()=>{loadItems().catch(()=>{});loadHistory().catch(()=>{})};
 }
 
@@ -269,7 +266,7 @@ $('#loginForm').onsubmit=async e=>{
   e.preventDefault();$('#authError').hidden=true;
   try{
     const d=await api('/login',{method:'POST',body:JSON.stringify({email:$('#loginEmail').value,password:$('#loginPassword').value})});
-    token=d.token;localStorage.setItem('psonia.token',token);await boot();
+    await boot();
   }catch(err){$('#authError').textContent=err.message;$('#authError').hidden=false}
 };
 
@@ -292,7 +289,7 @@ $('#joinHouse').onclick=async()=>{
   catch(e){$('#houseError').textContent=e.message;$('#houseError').hidden=false}
 };
 
-$('#logoutBtn').onclick=()=>{eventSource?.close();token='';me=null;household=null;lists=[];selectedList=null;localStorage.removeItem('psonia.token');show('#authView')};
+$('#logoutBtn').onclick=async()=>{try{await api('/logout',{method:'POST',body:'{}'})}catch{}eventSource?.close();me=null;household=null;lists=[];selectedList=null;show('#authView')};
 $('#listSelect').onchange=e=>selectList(e.target.value);
 $('#newSharedListBtn').onclick=()=>$('#sharedListDialog').showModal();
 $('#createSharedList').onclick=async e=>{
