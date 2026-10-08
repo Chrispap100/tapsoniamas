@@ -55,6 +55,15 @@
       <section id="settingsView" hidden><h2>Ρυθμίσεις</h2><div class="settings">
         <div class="notice"><strong>Κωδικός πρόσκλησης</strong><p id="inviteDisplay">—</p></div>
         <label>Εμφάνιση<select id="theme"><option value="system">Σύστημα</option><option value="light">Φωτεινό</option><option value="dark">Σκούρο</option></select></label>
+        <div class="notice">
+          <strong>Ασφάλεια λογαριασμού</strong>
+          <div class="stack compact-stack">
+            <input id="currentPassword" type="password" placeholder="Τρέχων κωδικός">
+            <input id="newPassword" type="password" minlength="8" placeholder="Νέος κωδικός (8+ χαρακτήρες)">
+            <button id="changePasswordBtn" class="secondary" type="button">Αλλαγή κωδικού</button>
+            <button id="logoutAllBtn" class="secondary" type="button">Αποσύνδεση από όλες τις συσκευές</button>
+          </div>
+        </div>
         <button id="installBtn" class="secondary" hidden>Εγκατάσταση εφαρμογής</button>
       </div></section>
 
