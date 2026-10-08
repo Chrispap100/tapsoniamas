@@ -1,28 +1,58 @@
 # Τα Ψώνια μας
 
-Λειτουργική mobile-first PWA για καθημερινή λίστα αγορών.
+Mobile-first κοινή λίστα αγορών με Node.js backend, PostgreSQL και realtime συγχρονισμό.
 
-## Τρέχουσα έκδοση
+## Architecture
 
-Η εφαρμογή ανοίγει απευθείας ως static site, χωρίς build step ή npm dependencies.
+- Frontend: vanilla HTML/CSS/JavaScript PWA
+- Backend: Node.js HTTP API
+- Database: PostgreSQL
+- Realtime: Server-Sent Events
+- Hosting: Render Web Service
+- Source of truth: GitHub branch `astra-shopping-app-rebuild`
 
-Υλοποιούνται ήδη:
-- γρήγορη προσθήκη και smart quantity parsing
-- duplicate quantity merge
-- αγορασμένα / επαναφορά
-- soft delete / πρόσφατα διαγραμμένα
-- ποσότητα, μονάδα, κατηγορία, κατάστημα, σημείωση, προτεραιότητα
-- αναζήτηση
-- ιστορικό
-- light / dark / system theme
-- offline local persistence
-- PWA manifest + service worker + install prompt
-- mobile-first responsive UI
+## Τρέχουσες λειτουργίες
 
-## Deployment
+- signup / login
+- δημιουργία household
+- συμμετοχή με invite code
+- κοινά shopping items
+- add / edit / purchased / restore / soft delete
+- quantity / unit / category / store / note / priority
+- activity history
+- realtime refresh μεταξύ sessions
+- search
+- light / dark / system mode
+- PWA shell / install support
 
-Για Render χρησιμοποίησε Static Site με publish directory το repository root και χωρίς build command.
+## Environment variables
 
-## Επόμενο backend βήμα
+- `DATABASE_URL` — PostgreSQL connection string
+- `JWT_SECRET` — ισχυρό production secret
+- `APP_ORIGIN` — επιτρεπόμενο frontend origin
+- `NODE_ENV=production`
 
-Για πραγματικό κοινό sync δύο χρηστών, login και realtime απαιτείται Supabase project. Δεν πρέπει να μπει service-role secret στον browser ή στο repository. Το επόμενο βήμα είναι Supabase Auth + households + memberships + shopping_items + RLS + realtime.
+Μην κάνεις commit πραγματικά secrets.
+
+## Render
+
+Προτεινόμενη τρέχουσα διάταξη:
+
+- Render Web Service: `tapsoniamas-api`
+- Build command: `npm install`
+- Start command: `npm start`
+- Branch: `astra-shopping-app-rebuild`
+
+Το ίδιο Web Service μπορεί να σερβίρει frontend και API.
+
+## Health
+
+`GET /api/health`
+
+## Γνωστό τρέχον blocker
+
+Χωρίς `DATABASE_URL`, το API ξεκινά αλλά δεν μπορεί να εκτελέσει signup/login ή να αποθηκεύσει δεδομένα.
+
+## Επόμενο pass
+
+Μετά το πρώτο end-to-end functional test θα γίνει security hardening: secure sessions, rate limiting, migrations, offline mutation queue, concurrency/versioning, CI/tests και πλήρες PWA/security audit.
