@@ -49,3 +49,12 @@ test('offline queue and PWA protections are present',()=>{
   assert.match(sw,/pathname\.startsWith\('\/api\/'\)/);
   assert.match(sw,/caches\.delete/);
 });
+
+test('manifest contains installable PNG icons and Apple icon is linked',()=>{
+  const manifest=JSON.parse(fs.readFileSync('manifest.webmanifest','utf8'));
+  const html=fs.readFileSync('index.html','utf8');
+  assert.ok(manifest.icons.some(i=>i.sizes==='192x192'&&i.type==='image/png'));
+  assert.ok(manifest.icons.some(i=>i.sizes==='512x512'&&i.type==='image/png'));
+  assert.match(html,/apple-touch-icon\.png/);
+  for(const file of ['icon-192.png','icon-512.png','apple-touch-icon.png'])assert.ok(fs.statSync(file).size>1000);
+});
