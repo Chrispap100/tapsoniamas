@@ -109,8 +109,15 @@ async function selectList(id){
 
 async function loadItems(){
   if(!selectedList){items=[];render();return}
-  const d=await api('/items?listId='+encodeURIComponent(selectedList.id));
-  items=d.items||[];
+  try{
+    const d=await api('/items?listId='+encodeURIComponent(selectedList.id));
+    items=d.items||[];
+    await OfflineStore.saveList(selectedList.id,items).catch(()=>{});
+  }catch(e){
+    const cached=await OfflineStore.loadList(selectedList.id).catch(()=>null);
+    if(cached?.items){items=cached.items;toast('Offline: εμφανίζεται η τελευταία αποθηκευμένη λίστα.')}
+    else throw e;
+  }
   render();
 }
 
@@ -146,24 +153,36 @@ async function addItem(){
   const dup=items.find(i=>i.status==='active'&&i.name.toLocaleLowerCase('el')===p.name.toLocaleLowerCase('el'));
   try{
     if(dup){
-      await api('/items/'+dup.id,{method:'PATCH',body:JSON.stringify({quantity:Number(dup.quantity)+p.quantity})});
+      await patch(dup,{quantity:Number(dup.quantity)+p.quantity});
       toast('Αυξήθηκε η ποσότητα');
     }else{
       await api('/items?listId='+encodeURIComponent(selectedList.id),{method:'POST',body:JSON.stringify({name:p.name,quantity:p.quantity,unit:p.unit})});
+      el.value='';await loadItems();
     }
-    el.value='';await loadItems();
-  }catch(e){toast(e.message)}
+  }catch(e){
+    if(!navigator.onLine||e instanceof TypeError){
+      const temp={id:'local-'+crypto.randomUUID(),list_id:selectedList.id,name:p.name,quantity:p.quantity,unit:p.unit,category:'Άλλα',store:'',note:'',priority:'normal',status:'active',version:1,created_at:new Date().toISOString()};
+      items.unshift(temp);render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});
+      await OfflineStore.enqueue({method:'POST',path:'/items?listId='+encodeURIComponent(selectedList.id),body:{name:p.name,quantity:p.quantity,unit:p.unit},listId:selectedList.id}).catch(()=>{});
+      el.value='';setSyncState('offline');toast('Αποθηκεύτηκε offline και θα συγχρονιστεί.');
+    }else toast(e.message);
+  }
 }
 
 async function patch(item,changes){
   if(!canWriteCurrent())return toast('Αυτή η προσωπική λίστα είναι μόνο για προβολή.');
+  if(String(item.id).startsWith('local-')){
+    Object.assign(item,changes);render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});return;
+  }
   try{
     await api('/items/'+item.id,{method:'PATCH',body:JSON.stringify({...changes,version:item.version})});
     await loadItems();
   }catch(e){
-    if(e.status===409){
-      toast(e.message);
-      await loadItems().catch(()=>{});
+    if(e.status===409){toast(e.message);await loadItems().catch(()=>{});return}
+    if(!navigator.onLine||e instanceof TypeError){
+      Object.assign(item,changes);render();await OfflineStore.saveList(selectedList.id,items).catch(()=>{});
+      await OfflineStore.enqueue({method:'PATCH',path:'/items/'+item.id,body:{...changes,version:item.version},listId:selectedList.id}).catch(()=>{});
+      setSyncState('offline');toast('Η αλλαγή αποθηκεύτηκε offline.');
       return;
     }
     toast(e.message);
@@ -261,9 +280,31 @@ function setTab(tab){
   if(tab==='admin')loadUsers().catch(e=>toast(e.message));
 }
 
-function updateNetwork(){
-  const on=navigator.onLine,n=$('#network');
-  n.textContent=on?'● Online':'● Offline';n.className='status '+(on?'ok':'off');
+function setSyncState(state){
+  const n=$('#network');
+  if(state==='syncing'){n.textContent='● Συγχρονισμός...';n.className='status'}
+  else if(state==='failed'){n.textContent='● Αποτυχία sync';n.className='status off'}
+  else if(state==='offline'){n.textContent='● Offline';n.className='status off'}
+  else{n.textContent='● Online';n.className='status ok'}
+}
+function updateNetwork(){setSyncState(navigator.onLine?'online':'offline')}
+async function replayQueue(){
+  if(!navigator.onLine)return;
+  const rows=await OfflineStore.all().catch(()=>[]);
+  if(!rows.length){setSyncState('online');return}
+  setSyncState('syncing');
+  let failed=false;
+  for(const row of rows){
+    try{
+      await api(row.path,{method:row.method,body:JSON.stringify(row.body)});
+      await OfflineStore.remove(row.id);
+    }catch(e){
+      if(e.status===409||e.status===401||e.status===403){row.status='failed';row.retries=(row.retries||0)+1;await OfflineStore.update(row).catch(()=>{});failed=true;continue}
+      row.retries=(row.retries||0)+1;await OfflineStore.update(row).catch(()=>{});failed=true;
+    }
+  }
+  if(selectedList)await loadItems().catch(()=>{});
+  setSyncState(failed?'failed':'online');
 }
 
 $('#showLogin').onclick=()=>{$('#loginForm').hidden=false;$('#signupForm').hidden=true;$('#showLogin').classList.add('active');$('#showSignup').classList.remove('active')};
@@ -319,9 +360,9 @@ const theme=localStorage.getItem('psonia.theme')||'system';
 $('#theme').value=theme;document.documentElement.dataset.theme=theme;
 $('#theme').onchange=e=>{document.documentElement.dataset.theme=e.target.value;localStorage.setItem('psonia.theme',e.target.value)};
 
-addEventListener('online',updateNetwork);addEventListener('offline',updateNetwork);
+addEventListener('online',()=>{updateNetwork();replayQueue().catch(()=>setSyncState('failed'))});addEventListener('offline',updateNetwork);
 addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('#installBtn').hidden=false});
 $('#installBtn').onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('#installBtn').hidden=true};
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 
-updateNetwork();boot();
+updateNetwork();boot().then(()=>{if(navigator.onLine)replayQueue().catch(()=>{})});
