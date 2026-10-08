@@ -262,8 +262,12 @@ function renderUsers(users){
       memberBox.appendChild(label);
       for(const l of sharedLists){
         const already=(u.list_ids||[]).includes(l.id);
-        const b=document.createElement('button');b.className='chip';b.textContent=(already?'✓ ':'+ ')+l.name;b.disabled=already;
-        b.onclick=async()=>{try{await api('/lists/'+l.id+'/members',{method:'POST',body:JSON.stringify({userId:u.id})});toast('Προστέθηκε στην κοινή λίστα');await loadUsers()}catch(e){toast(e.message)}};
+        const b=document.createElement('button');b.className='chip';b.textContent=(already?'✓ ':'+ ')+l.name;
+        b.onclick=async()=>{try{
+          await api('/lists/'+l.id+'/members',{method:already?'DELETE':'POST',body:JSON.stringify({userId:u.id})});
+          toast(already?'Αφαιρέθηκε από την κοινή λίστα':'Προστέθηκε στην κοινή λίστα');
+          await loadUsers();
+        }catch(e){toast(e.message)}};
         memberBox.appendChild(b);
       }
       card.appendChild(memberBox);
@@ -350,6 +354,19 @@ $('#createSharedList').onclick=async e=>{
   }catch(err){toast(err.message)}
 };
 $('#refreshUsers').onclick=()=>loadUsers().catch(e=>toast(e.message));
+$('#changePasswordBtn').onclick=async()=>{
+  const currentPassword=$('#currentPassword').value,newPassword=$('#newPassword').value;
+  if(!currentPassword||newPassword.length<8)return toast('Συμπλήρωσε σωστά τους κωδικούς.');
+  try{
+    const d=await api('/password',{method:'POST',body:JSON.stringify({currentPassword,newPassword})});
+    toast(d.message||'Ο κωδικός άλλαξε.');
+    eventSource?.close();me=null;household=null;lists=[];selectedList=null;show('#authView');
+  }catch(e){toast(e.message)}
+};
+$('#logoutAllBtn').onclick=async()=>{
+  try{await api('/logout-all',{method:'POST',body:'{}'})}catch{}
+  eventSource?.close();me=null;household=null;lists=[];selectedList=null;show('#authView');
+};
 $('#addBtn').onclick=addItem;
 $('#quickInput').onkeydown=e=>{if(e.key==='Enter')addItem()};
 $('#search').oninput=e=>{query=e.target.value;render()};
