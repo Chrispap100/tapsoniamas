@@ -208,12 +208,12 @@ const server=http.createServer(async(req,res)=>{
     await ensurePersonalList(user.id,h.id);
     const admin=await isHouseholdAdmin(user.id,h.id);
     const r=await pool.query(`
-      select distinct l.*,u.display_name as owner_name
+      select l.*,u.display_name as owner_name
       from shopping_app.lists l
-      left join shopping_app.list_memberships lm on lm.list_id=l.id
       left join shopping_app.users u on u.id=l.owner_user_id
       where l.household_id=$1 and (
-        l.owner_user_id=$2 or lm.user_id=$2 or
+        l.owner_user_id=$2 or
+        exists(select 1 from shopping_app.list_memberships lm where lm.list_id=l.id and lm.user_id=$2) or
         ($3=true and (l.type='shared' or l.admin_visible=true))
       )
       order by case when l.owner_user_id=$2 then 0 when l.type='shared' then 1 else 2 end,l.created_at
