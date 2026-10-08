@@ -9,8 +9,7 @@ const {Pool}=require('pg');
 const PORT=process.env.PORT||10000;
 const JWT_SECRET=process.env.JWT_SECRET||crypto.randomBytes(48).toString('hex');
 const DATABASE_URL=process.env.DATABASE_URL;
-const ORIGIN=process.env.APP_ORIGIN||'https://tapsoniamas-preview.onrender.com';
-if(!DATABASE_URL) console.error('DATABASE_URL missing');
+const ORIGIN=process.env.APP_ORIGIN||'https://tapsoniamas-api.onrender.com';
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
 const clients=new Map();
 
@@ -23,8 +22,15 @@ async function init(){
    email text unique not null,
    password_hash text not null,
    display_name text not null default '',
+   status text not null default 'active',
+   app_role text not null default 'user',
+   last_login_at timestamptz,
    created_at timestamptz not null default now()
  );
+ alter table shopping_app.users add column if not exists status text not null default 'active';
+ alter table shopping_app.users add column if not exists app_role text not null default 'user';
+ alter table shopping_app.users add column if not exists last_login_at timestamptz;
+
  create table if not exists shopping_app.households(
    id uuid primary key,
    name text not null,
@@ -39,9 +45,32 @@ async function init(){
    created_at timestamptz not null default now(),
    primary key(user_id,household_id)
  );
+
+ create table if not exists shopping_app.lists(
+   id uuid primary key,
+   household_id uuid not null references shopping_app.households(id) on delete cascade,
+   owner_user_id uuid references shopping_app.users(id) on delete cascade,
+   name text not null,
+   type text not null check(type in ('personal','shared')),
+   admin_visible boolean not null default true,
+   created_by uuid not null references shopping_app.users(id),
+   created_at timestamptz not null default now()
+ );
+ create unique index if not exists one_personal_list_per_user on shopping_app.lists(owner_user_id) where type='personal';
+ create index if not exists lists_household_idx on shopping_app.lists(household_id);
+
+ create table if not exists shopping_app.list_memberships(
+   list_id uuid not null references shopping_app.lists(id) on delete cascade,
+   user_id uuid not null references shopping_app.users(id) on delete cascade,
+   role text not null default 'member',
+   created_at timestamptz not null default now(),
+   primary key(list_id,user_id)
+ );
+
  create table if not exists shopping_app.items(
    id uuid primary key,
    household_id uuid not null references shopping_app.households(id) on delete cascade,
+   list_id uuid references shopping_app.lists(id) on delete cascade,
    name text not null,
    quantity numeric not null default 1,
    unit text not null default 'τεμ.',
@@ -53,25 +82,86 @@ async function init(){
    created_by uuid not null references shopping_app.users(id),
    created_at timestamptz not null default now(),
    updated_at timestamptz not null default now(),
-   purchased_at timestamptz
+   purchased_at timestamptz,
+   deleted_at timestamptz,
+   deleted_by uuid references shopping_app.users(id)
  );
+ alter table shopping_app.items add column if not exists list_id uuid references shopping_app.lists(id) on delete cascade;
+ alter table shopping_app.items add column if not exists deleted_at timestamptz;
+ alter table shopping_app.items add column if not exists deleted_by uuid references shopping_app.users(id);
+ create index if not exists items_list_idx on shopping_app.items(list_id,status,updated_at desc);
+
  create table if not exists shopping_app.activity(
    id uuid primary key,
    household_id uuid not null references shopping_app.households(id) on delete cascade,
+   list_id uuid references shopping_app.lists(id) on delete cascade,
    user_id uuid not null references shopping_app.users(id),
    action text not null,
    item_name text,
    created_at timestamptz not null default now()
- );`);
+ );
+ alter table shopping_app.activity add column if not exists list_id uuid references shopping_app.lists(id) on delete cascade;
+
+ update shopping_app.users u set app_role='admin',status='active'
+ where exists(select 1 from shopping_app.households h where h.created_by=u.id);
+
+ insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by)
+ select gen_random_uuid(),h.id,null,'Κοινή λίστα','shared',true,h.created_by
+ from shopping_app.households h
+ where not exists(select 1 from shopping_app.lists l where l.household_id=h.id and l.type='shared');
+
+ insert into shopping_app.list_memberships(list_id,user_id,role)
+ select l.id,m.user_id,case when m.role='owner' then 'owner' else 'member' end
+ from shopping_app.lists l
+ join shopping_app.memberships m on m.household_id=l.household_id
+ where l.type='shared'
+ on conflict do nothing;
+
+ update shopping_app.items i set list_id=(
+   select l.id from shopping_app.lists l where l.household_id=i.household_id and l.type='shared' order by l.created_at limit 1
+ ) where i.list_id is null;
+ `);
 }
+
 function send(res,status,data,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','access-control-allow-origin':ORIGIN,'access-control-allow-credentials':'true',...headers});res.end(JSON.stringify(data))}
 function token(req){const h=req.headers.authorization||'';if(h.startsWith('Bearer '))return h.slice(7);try{return new URL(req.url,'http://localhost').searchParams.get('token')}catch{return null}}
 function auth(req){try{return jwt.verify(token(req),JWT_SECRET)}catch{return null}}
 async function body(req){return new Promise((resolve,reject)=>{let b='';req.on('data',d=>{b+=d;if(b.length>1e6)req.destroy()});req.on('end',()=>{try{resolve(b?JSON.parse(b):{})}catch{reject(new Error('invalid_json'))}});req.on('error',reject)})}
-async function member(userId,householdId){const r=await pool.query('select 1 from shopping_app.memberships where user_id=$1 and household_id=$2',[userId,householdId]);return !!r.rowCount}
-async function firstHousehold(userId){const r=await pool.query('select h.id,h.name,h.invite_code from shopping_app.memberships m join shopping_app.households h on h.id=m.household_id where m.user_id=$1 order by m.created_at limit 1',[userId]);return r.rows[0]||null}
-function emit(householdId,event){const set=clients.get(householdId);if(!set)return;for(const res of set){res.write(`data: ${JSON.stringify(event)}\n\n`)}}
-async function log(hid,uid,action,itemName){await pool.query('insert into shopping_app.activity(id,household_id,user_id,action,item_name) values($1,$2,$3,$4,$5)',[crypto.randomUUID(),hid,uid,action,itemName||null])}
+async function currentUser(userId){const r=await pool.query('select id,email,display_name,status,app_role,last_login_at,created_at from shopping_app.users where id=$1',[userId]);return r.rows[0]||null}
+async function firstHousehold(userId){const r=await pool.query(`select h.id,h.name,h.invite_code,m.role from shopping_app.memberships m join shopping_app.households h on h.id=m.household_id where m.user_id=$1 order by m.created_at limit 1`,[userId]);return r.rows[0]||null}
+async function isHouseholdAdmin(userId,householdId){const r=await pool.query(`select 1 from shopping_app.memberships m join shopping_app.users u on u.id=m.user_id where m.user_id=$1 and m.household_id=$2 and (m.role='owner' or u.app_role='admin')`,[userId,householdId]);return !!r.rowCount}
+async function ensurePersonalList(userId,householdId){
+ const found=await pool.query("select * from shopping_app.lists where owner_user_id=$1 and type='personal' limit 1",[userId]);
+ if(found.rowCount)return found.rows[0];
+ const id=crypto.randomUUID();
+ const u=await currentUser(userId);
+ const name=`Προσωπική λίστα${u?.display_name?' — '+u.display_name:''}`;
+ const r=await pool.query(`insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by) values($1,$2,$3,$4,'personal',true,$3) returning *`,[id,householdId,userId,name]);
+ await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'owner') on conflict do nothing",[id,userId]);
+ return r.rows[0];
+}
+async function canReadList(user,list){
+ if(!list)return false;
+ if(list.owner_user_id===user.id)return true;
+ if(list.type==='shared'){
+   const m=await pool.query('select 1 from shopping_app.list_memberships where list_id=$1 and user_id=$2',[list.id,user.id]);
+   if(m.rowCount)return true;
+   return await isHouseholdAdmin(user.id,list.household_id);
+ }
+ return list.admin_visible && await isHouseholdAdmin(user.id,list.household_id);
+}
+async function canWriteList(user,list){
+ if(!list)return false;
+ if(list.owner_user_id===user.id)return true;
+ if(list.type==='shared'){
+   const m=await pool.query('select 1 from shopping_app.list_memberships where list_id=$1 and user_id=$2',[list.id,user.id]);
+   return !!m.rowCount || await isHouseholdAdmin(user.id,list.household_id);
+ }
+ return false;
+}
+async function getList(id){const r=await pool.query('select * from shopping_app.lists where id=$1',[id]);return r.rows[0]||null}
+function emit(listId,event){const set=clients.get(listId);if(!set)return;for(const res of set)res.write(`data: ${JSON.stringify(event)}\n\n`)}
+async function log(hid,listId,uid,action,itemName){await pool.query('insert into shopping_app.activity(id,household_id,list_id,user_id,action,item_name) values($1,$2,$3,$4,$5,$6)',[crypto.randomUUID(),hid,listId,uid,action,itemName||null])}
 function staticFile(req,res){let p=new URL(req.url,'http://x').pathname;if(p==='/')p='/index.html';const safe=path.normalize(p).replace(/^\.\.(\/|\\|$)/,'');const file=path.join(__dirname,safe);if(!file.startsWith(__dirname)||!fs.existsSync(file)||fs.statSync(file).isDirectory())return false;const ext=path.extname(file);const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};res.writeHead(200,{'content-type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);return true}
 
 const server=http.createServer(async(req,res)=>{
@@ -80,31 +170,189 @@ const server=http.createServer(async(req,res)=>{
   const u=new URL(req.url,'http://localhost');
   if(u.pathname==='/api/health')return send(res,200,{ok:true,database:!!pool});
   if(!pool&&u.pathname.startsWith('/api/'))return send(res,503,{error:'Η βάση δεδομένων δεν έχει συνδεθεί ακόμη.'});
+
   if(u.pathname==='/api/signup'&&req.method==='POST'){
-    const b=await body(req);if(!b.email||!b.password||String(b.password).length<6)return send(res,400,{error:'Χρειάζεται email και κωδικός τουλάχιστον 6 χαρακτήρων.'});
+    const b=await body(req);
+    if(!b.email||!b.password||String(b.password).length<6||!String(b.displayName||'').trim())return send(res,400,{error:'Χρειάζεται όνομα, email και κωδικός τουλάχιστον 6 χαρακτήρων.'});
     const id=crypto.randomUUID(),hash=await bcrypt.hash(String(b.password),12);
-    try{await pool.query('insert into shopping_app.users(id,email,password_hash,display_name) values($1,$2,$3,$4)',[id,String(b.email).toLowerCase(),hash,b.displayName||'']);}
+    try{await pool.query(`insert into shopping_app.users(id,email,password_hash,display_name,status,app_role) values($1,$2,$3,$4,'pending','user')`,[id,String(b.email).toLowerCase(),hash,String(b.displayName).trim()]);}
     catch(e){if(e.code==='23505')return send(res,409,{error:'Υπάρχει ήδη λογαριασμός με αυτό το email.'});throw e}
-    const t=jwt.sign({sub:id,email:String(b.email).toLowerCase()},JWT_SECRET,{expiresIn:'30d'});return send(res,201,{token:t,user:{id,email:String(b.email).toLowerCase(),displayName:b.displayName||''}});
+    return send(res,201,{pending:true,message:'Η εγγραφή ολοκληρώθηκε και περιμένει έγκριση από τον διαχειριστή.'});
   }
+
   if(u.pathname==='/api/login'&&req.method==='POST'){
-    const b=await body(req);const r=await pool.query('select * from shopping_app.users where email=$1',[String(b.email||'').toLowerCase()]);const user=r.rows[0];
+    const b=await body(req);
+    const r=await pool.query('select * from shopping_app.users where email=$1',[String(b.email||'').toLowerCase()]);
+    const user=r.rows[0];
     if(!user||!(await bcrypt.compare(String(b.password||''),user.password_hash)))return send(res,401,{error:'Λάθος email ή κωδικός.'});
-    const t=jwt.sign({sub:user.id,email:user.email},JWT_SECRET,{expiresIn:'30d'});return send(res,200,{token:t,user:{id:user.id,email:user.email,displayName:user.display_name}});
+    if(user.status==='pending')return send(res,403,{error:'Ο λογαριασμός σου περιμένει έγκριση από τον διαχειριστή.',status:'pending'});
+    if(user.status!=='active')return send(res,403,{error:'Ο λογαριασμός δεν είναι ενεργός.',status:user.status});
+    await pool.query('update shopping_app.users set last_login_at=now() where id=$1',[user.id]);
+    const t=jwt.sign({sub:user.id,email:user.email},JWT_SECRET,{expiresIn:'30d'});
+    return send(res,200,{token:t,user:{id:user.id,email:user.email,displayName:user.display_name,role:user.app_role}});
   }
+
   if(!u.pathname.startsWith('/api/')){if(staticFile(req,res))return;res.writeHead(404);return res.end('Not found')}
   const a=auth(req);if(!a)return send(res,401,{error:'Χρειάζεται σύνδεση.'});
-  if(u.pathname==='/api/me'&&req.method==='GET'){const h=await firstHousehold(a.sub);return send(res,200,{user:{id:a.sub,email:a.email},household:h})}
-  if(u.pathname==='/api/households'&&req.method==='POST'){const b=await body(req),hid=crypto.randomUUID(),code=crypto.randomBytes(4).toString('hex').toUpperCase();await pool.query('insert into shopping_app.households(id,name,invite_code,created_by) values($1,$2,$3,$4)',[hid,b.name||'Το σπίτι μας',code,a.sub]);await pool.query('insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,$3)',[a.sub,hid,'owner']);return send(res,201,{id:hid,name:b.name||'Το σπίτι μας',inviteCode:code})}
-  if(u.pathname==='/api/households/join'&&req.method==='POST'){const b=await body(req);const r=await pool.query('select id,name,invite_code from shopping_app.households where invite_code=$1',[String(b.inviteCode||'').toUpperCase()]);if(!r.rowCount)return send(res,404,{error:'Ο κωδικός πρόσκλησης δεν βρέθηκε.'});await pool.query('insert into shopping_app.memberships(user_id,household_id) values($1,$2) on conflict do nothing',[a.sub,r.rows[0].id]);return send(res,200,{id:r.rows[0].id,name:r.rows[0].name,inviteCode:r.rows[0].invite_code})}
-  const h=await firstHousehold(a.sub);if(['/api/items','/api/events','/api/activity'].includes(u.pathname)&&!h)return send(res,409,{error:'Δημιούργησε ή μπες πρώτα σε κοινή λίστα.'});
-  if(u.pathname==='/api/events'&&req.method==='GET'){res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':ORIGIN});if(!clients.has(h.id))clients.set(h.id,new Set());clients.get(h.id).add(res);res.write('event: ready\ndata: {}\n\n');req.on('close',()=>clients.get(h.id)?.delete(res));return}
-  if(u.pathname==='/api/items'&&req.method==='GET'){const r=await pool.query('select * from shopping_app.items where household_id=$1 order by created_at desc',[h.id]);return send(res,200,{items:r.rows})}
-  if(u.pathname==='/api/items'&&req.method==='POST'){const b=await body(req),iid=crypto.randomUUID();const r=await pool.query(`insert into shopping_app.items(id,household_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'active',$10) returning *`,[iid,h.id,b.name,b.quantity||1,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',a.sub]);await log(h.id,a.sub,'add',b.name);emit(h.id,{type:'items_changed'});return send(res,201,{item:r.rows[0]})}
-  const m=u.pathname.match(/^\/api\/items\/([0-9a-f-]+)$/);
-  if(m&&req.method==='PATCH'){const iid=m[1],b=await body(req);const allowed=['name','quantity','unit','category','store','note','priority','status'];const sets=[],vals=[];let n=1;for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=$${n++}`);vals.push(b[k])}sets.push(`updated_at=now()`);if(b.status==='purchased')sets.push('purchased_at=now()');if(b.status==='active')sets.push('purchased_at=null');vals.push(iid,h.id);const r=await pool.query(`update shopping_app.items set ${sets.join(',')} where id=$${n++} and household_id=$${n} returning *`,vals);if(!r.rowCount)return send(res,404,{error:'Το προϊόν δεν βρέθηκε.'});await log(h.id,a.sub,'update',r.rows[0].name);emit(h.id,{type:'items_changed'});return send(res,200,{item:r.rows[0]})}
-  if(u.pathname==='/api/activity'&&req.method==='GET'){const r=await pool.query('select a.*,u.display_name,u.email from shopping_app.activity a join shopping_app.users u on u.id=a.user_id where household_id=$1 order by created_at desc limit 200',[h.id]);return send(res,200,{activity:r.rows})}
+  const user=await currentUser(a.sub);if(!user||user.status!=='active')return send(res,403,{error:'Ο λογαριασμός δεν είναι ενεργός.'});
+
+  if(u.pathname==='/api/me'&&req.method==='GET'){
+    const h=await firstHousehold(user.id);
+    return send(res,200,{user:{id:user.id,email:user.email,displayName:user.display_name,role:user.app_role,status:user.status},household:h});
+  }
+
+  if(u.pathname==='/api/households'&&req.method==='POST'){
+    const b=await body(req),hid=crypto.randomUUID(),code=crypto.randomBytes(6).toString('hex').toUpperCase();
+    await pool.query('begin');
+    try{
+      await pool.query('insert into shopping_app.households(id,name,invite_code,created_by) values($1,$2,$3,$4)',[hid,b.name||'Το σπίτι μας',code,user.id]);
+      await pool.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'owner') on conflict do nothing",[user.id,hid]);
+      await pool.query("update shopping_app.users set app_role='admin',status='active' where id=$1",[user.id]);
+      const lid=crypto.randomUUID();
+      await pool.query(`insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by) values($1,$2,null,'Κοινή λίστα','shared',true,$3)`,[lid,hid,user.id]);
+      await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'owner')",[lid,user.id]);
+      await pool.query('commit');
+      await ensurePersonalList(user.id,hid);
+      return send(res,201,{id:hid,name:b.name||'Το σπίτι μας',inviteCode:code});
+    }catch(e){await pool.query('rollback');throw e}
+  }
+
+  if(u.pathname==='/api/households/join'&&req.method==='POST'){
+    const b=await body(req);
+    const r=await pool.query('select id,name,invite_code from shopping_app.households where invite_code=$1',[String(b.inviteCode||'').toUpperCase()]);
+    if(!r.rowCount)return send(res,404,{error:'Ο κωδικός πρόσκλησης δεν βρέθηκε.'});
+    await pool.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'member') on conflict do nothing",[user.id,r.rows[0].id]);
+    await ensurePersonalList(user.id,r.rows[0].id);
+    return send(res,200,{id:r.rows[0].id,name:r.rows[0].name,inviteCode:r.rows[0].invite_code});
+  }
+
+  const h=await firstHousehold(user.id);
+
+  if(u.pathname==='/api/lists'&&req.method==='GET'){
+    if(!h)return send(res,200,{lists:[]});
+    const admin=await isHouseholdAdmin(user.id,h.id);
+    const r=await pool.query(`
+      select distinct l.*,u.display_name as owner_name
+      from shopping_app.lists l
+      left join shopping_app.list_memberships lm on lm.list_id=l.id
+      left join shopping_app.users u on u.id=l.owner_user_id
+      where l.household_id=$1 and (
+        l.owner_user_id=$2 or lm.user_id=$2 or
+        ($3=true and (l.type='shared' or l.admin_visible=true))
+      )
+      order by case when l.owner_user_id=$2 then 0 when l.type='shared' then 1 else 2 end,l.created_at
+    `,[h.id,user.id,admin]);
+    return send(res,200,{lists:r.rows,admin});
+  }
+
+  if(u.pathname==='/api/lists'&&req.method==='POST'){
+    if(!h)return send(res,409,{error:'Πρέπει πρώτα να ανήκεις σε ένα σπίτι.'});
+    const b=await body(req);
+    const type=b.type==='personal'?'personal':'shared';
+    if(type==='personal'){
+      const personal=await ensurePersonalList(user.id,h.id);
+      return send(res,200,{list:personal});
+    }
+    const id=crypto.randomUUID(),name=String(b.name||'Κοινή λίστα').trim().slice(0,80)||'Κοινή λίστα';
+    const r=await pool.query(`insert into shopping_app.lists(id,household_id,owner_user_id,name,type,admin_visible,created_by) values($1,$2,null,$3,'shared',true,$4) returning *`,[id,h.id,name,user.id]);
+    await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'owner')",[id,user.id]);
+    if(user.app_role!=='admin'){
+      const admins=await pool.query(`select m.user_id from shopping_app.memberships m join shopping_app.users u on u.id=m.user_id where m.household_id=$1 and (m.role='owner' or u.app_role='admin')`,[h.id]);
+      for(const row of admins.rows)await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'admin') on conflict do nothing",[id,row.user_id]);
+    }
+    return send(res,201,{list:r.rows[0]});
+  }
+
+  if(u.pathname==='/api/admin/users'&&req.method==='GET'){
+    if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να δει τους χρήστες.'});
+    const r=await pool.query(`
+      select u.id,u.email,u.display_name,u.status,u.app_role,u.last_login_at,u.created_at,
+      exists(select 1 from shopping_app.memberships m where m.user_id=u.id and m.household_id=$1) as in_household
+      from shopping_app.users u order by u.created_at desc
+    `,[h.id]);
+    return send(res,200,{users:r.rows});
+  }
+
+  const approve=u.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]+)\/approve$/);
+  if(approve&&req.method==='POST'){
+    if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να εγκρίνει χρήστες.'});
+    const uid=approve[1];
+    const target=await currentUser(uid);if(!target)return send(res,404,{error:'Ο χρήστης δεν βρέθηκε.'});
+    await pool.query("update shopping_app.users set status='active' where id=$1",[uid]);
+    await pool.query("insert into shopping_app.memberships(user_id,household_id,role) values($1,$2,'member') on conflict do nothing",[uid,h.id]);
+    await ensurePersonalList(uid,h.id);
+    return send(res,200,{ok:true});
+  }
+
+  const statusMatch=u.pathname.match(/^\/api\/admin\/users\/([0-9a-f-]+)\/status$/);
+  if(statusMatch&&req.method==='PATCH'){
+    if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να αλλάξει κατάσταση χρήστη.'});
+    const b=await body(req),allowed=['active','suspended','rejected'];
+    if(!allowed.includes(b.status))return send(res,400,{error:'Μη έγκυρη κατάσταση χρήστη.'});
+    await pool.query('update shopping_app.users set status=$1 where id=$2 and id<>$3',[b.status,statusMatch[1],user.id]);
+    return send(res,200,{ok:true});
+  }
+
+  const memberMatch=u.pathname.match(/^\/api\/lists\/([0-9a-f-]+)\/members$/);
+  if(memberMatch&&req.method==='POST'){
+    if(!h||!(await isHouseholdAdmin(user.id,h.id)))return send(res,403,{error:'Μόνο ο διαχειριστής μπορεί να προσθέτει μέλη σε λίστα.'});
+    const list=await getList(memberMatch[1]);if(!list||list.household_id!==h.id||list.type!=='shared')return send(res,404,{error:'Η κοινή λίστα δεν βρέθηκε.'});
+    const b=await body(req);
+    await pool.query("insert into shopping_app.list_memberships(list_id,user_id,role) values($1,$2,'member') on conflict do nothing",[list.id,b.userId]);
+    return send(res,200,{ok:true});
+  }
+
+  const listId=u.searchParams.get('listId');
+  const list=listId?await getList(listId):null;
+
+  if(u.pathname==='/api/events'&&req.method==='GET'){
+    if(!list||!(await canReadList(user,list)))return send(res,403,{error:'Δεν έχεις πρόσβαση σε αυτή τη λίστα.'});
+    res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive','access-control-allow-origin':ORIGIN});
+    if(!clients.has(list.id))clients.set(list.id,new Set());clients.get(list.id).add(res);
+    res.write('event: ready\ndata: {}\n\n');
+    req.on('close',()=>clients.get(list.id)?.delete(res));return;
+  }
+
+  if(u.pathname==='/api/items'&&req.method==='GET'){
+    if(!list||!(await canReadList(user,list)))return send(res,403,{error:'Δεν έχεις πρόσβαση σε αυτή τη λίστα.'});
+    const r=await pool.query('select * from shopping_app.items where list_id=$1 order by created_at desc',[list.id]);
+    return send(res,200,{items:r.rows});
+  }
+
+  if(u.pathname==='/api/items'&&req.method==='POST'){
+    if(!list||!(await canWriteList(user,list)))return send(res,403,{error:'Δεν μπορείς να αλλάξεις αυτή τη λίστα.'});
+    const b=await body(req),name=String(b.name||'').trim();
+    if(!name)return send(res,400,{error:'Γράψε όνομα προϊόντος.'});
+    const iid=crypto.randomUUID();
+    const r=await pool.query(`insert into shopping_app.items(id,household_id,list_id,name,quantity,unit,category,store,note,priority,status,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'active',$11) returning *`,[iid,list.household_id,list.id,name,b.quantity||1,b.unit||'τεμ.',b.category||'Άλλα',b.store||'',b.note||'',b.priority||'normal',user.id]);
+    await log(list.household_id,list.id,user.id,'add',name);emit(list.id,{type:'items_changed'});return send(res,201,{item:r.rows[0]});
+  }
+
+  const itemMatch=u.pathname.match(/^\/api\/items\/([0-9a-f-]+)$/);
+  if(itemMatch&&req.method==='PATCH'){
+    const ir=await pool.query('select i.*,l.type,l.owner_user_id,l.admin_visible from shopping_app.items i join shopping_app.lists l on l.id=i.list_id where i.id=$1',[itemMatch[1]]);
+    const item=ir.rows[0];if(!item)return send(res,404,{error:'Το προϊόν δεν βρέθηκε.'});
+    const itemList={id:item.list_id,household_id:item.household_id,type:item.type,owner_user_id:item.owner_user_id,admin_visible:item.admin_visible};
+    if(!(await canWriteList(user,itemList)))return send(res,403,{error:'Δεν μπορείς να αλλάξεις αυτή τη λίστα.'});
+    const b=await body(req),allowed=['name','quantity','unit','category','store','note','priority','status'],sets=[],vals=[];let n=1;
+    for(const k of allowed)if(Object.prototype.hasOwnProperty.call(b,k)){sets.push(`${k}=$${n++}`);vals.push(b[k])}
+    sets.push('updated_at=now()');
+    if(b.status==='purchased')sets.push('purchased_at=now()');
+    if(b.status==='active')sets.push('purchased_at=null','deleted_at=null','deleted_by=null');
+    if(b.status==='deleted'){sets.push('deleted_at=now()');sets.push(`deleted_by=$${n++}`);vals.push(user.id)}
+    vals.push(item.id);
+    const r=await pool.query(`update shopping_app.items set ${sets.join(',')} where id=$${n} returning *`,vals);
+    await log(item.household_id,item.list_id,user.id,'update',r.rows[0].name);emit(item.list_id,{type:'items_changed'});return send(res,200,{item:r.rows[0]});
+  }
+
+  if(u.pathname==='/api/activity'&&req.method==='GET'){
+    if(!list||!(await canReadList(user,list)))return send(res,403,{error:'Δεν έχεις πρόσβαση σε αυτή τη λίστα.'});
+    const r=await pool.query('select a.*,u.display_name,u.email from shopping_app.activity a join shopping_app.users u on u.id=a.user_id where a.list_id=$1 order by a.created_at desc limit 200',[list.id]);
+    return send(res,200,{activity:r.rows});
+  }
+
   return send(res,404,{error:'Δεν βρέθηκε η λειτουργία.'});
  }catch(e){console.error(e);send(res,500,{error:'Κάτι πήγε στραβά. Δοκίμασε ξανά.'})}
 });
+
 init().then(()=>server.listen(PORT,'0.0.0.0',()=>console.log('listening',PORT))).catch(e=>{console.error(e);process.exit(1)});
