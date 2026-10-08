@@ -1,9 +1,18 @@
 {
-  "name":"tapsoniamas",
-  "version":"1.0.0",
-  "private":true,
-  "type":"commonjs",
-  "scripts":{"start":"node server.js"},
-  "engines":{"node":">=20"},
-  "dependencies":{"bcryptjs":"^2.4.3","jsonwebtoken":"^9.0.2","pg":"^8.13.1"}
+  "name": "tapsoniamas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check script.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "pg": "^8.13.1"
+  }
 }
